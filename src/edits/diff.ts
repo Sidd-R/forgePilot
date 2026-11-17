@@ -1,4 +1,5 @@
-import type { Hunk } from '../types';
+import type { Hunk, TextEdit } from '../types';
+import { findOldText } from './matcher';
 
 /** Gaps of this many unchanged lines or fewer merge adjacent changes. */
 export const HUNK_MERGE_GAP = 3;
@@ -153,6 +154,57 @@ export function computeHunks(oldText: string, newText: string): Hunk[] {
     return [];
   }
   return rowsToHunks(diffLines(oldText.split('\n'), newText.split('\n')));
+}
+
+/**
+ * One hunk per search-and-replace edit, matched independently in the
+ * original text so each model-proposed change reviews on its own even
+ * when changes are adjacent. Falls back (null) when edits overlap, in
+ * which case the caller diffs the whole proposal instead. Throws
+ * MatchError exactly like sequential application.
+ */
+export function createEditHunks(
+  oldText: string,
+  edits: TextEdit[],
+): { hunks: Hunk[]; newText: string } | null {
+  const lines = oldText.split('\n');
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    starts.push(offset);
+    offset += line.length + 1;
+  }
+  const lineOf = (index: number): number => {
+    let line = 0;
+    while (line + 1 < starts.length && starts[line + 1] <= index) {
+      line++;
+    }
+    return line;
+  };
+  const spans = edits.map((edit) => ({ ...findOldText(oldText, edit.old_text), edit }));
+  const ordered = [...spans].sort((a, b) => a.index - b.index);
+  for (let i = 1; i < ordered.length; i++) {
+    if (ordered[i].index < ordered[i - 1].index + ordered[i - 1].length) {
+      return null;
+    }
+  }
+  const hunks: Hunk[] = ordered.map((span, k) => {
+    const firstLine = lineOf(span.index);
+    const lastLine = lineOf(span.index + Math.max(0, span.length - 1));
+    const prefix = lines[firstLine].slice(0, Math.max(0, span.index - starts[firstLine]));
+    const endCol = span.index + span.length - starts[lastLine];
+    const suffix = lines[lastLine].slice(Math.min(endCol, lines[lastLine].length));
+    const oldLines = lines.slice(firstLine, lastLine + 1);
+    const newLines = (prefix + span.edit.new_text + suffix).split('\n');
+    return { id: `h${k + 1}`, startLine: firstLine + 1, oldLines, newLines };
+  });
+  for (let i = 1; i < hunks.length; i++) {
+    if (hunks[i].startLine < hunks[i - 1].startLine + hunks[i - 1].oldLines.length) {
+      return null;
+    }
+  }
+  const ids = new Set(hunks.map((h) => h.id));
+  return { hunks, newText: applyHunks(oldText, hunks, ids) };
 }
 
 /**

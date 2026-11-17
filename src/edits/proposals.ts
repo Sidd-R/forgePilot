@@ -1,15 +1,10 @@
 import * as crypto from 'node:crypto';
 import type * as vscode from 'vscode';
 import type { Hunk, Proposal, ProposeEditInput } from '../types';
-import { applyHunks, computeHunks } from './diff';
+import { applyHunks, computeHunks, createEditHunks } from './diff';
 import { applyEditsToText } from './matcher';
 
-/**
- * SINGLE DISK-WRITE PATH. Only this module may change files, and only
- * for hunks the user accepted (writeguard test enforces this). `vscode`
- * is injected (type-only import) so unit tests run in plain Node.
- */
-
+/** SINGLE DISK-WRITE PATH (writeguard test enforces this). `vscode` is injected. */
 let vs: typeof vscode | undefined;
 
 /** Called once from the extension entry point. */
@@ -51,11 +46,14 @@ export function createProposal(
     throw new Error('propose_edit needs edits or content.');
   }
   const oldText = currentText ?? '';
-  const newText =
-    input.content !== undefined ? input.content : applyEditsToText(oldText, input.edits);
+  const perEdit =
+    !isNewFile && input.content === undefined && input.edits?.length
+      ? createEditHunks(oldText, input.edits)
+      : null;
+  const newText = input.content ?? perEdit?.newText ?? applyEditsToText(oldText, input.edits);
   const hunks: Hunk[] = isNewFile
     ? [{ id: 'h1', startLine: 1, oldLines: [], newLines: newText.split('\n') }]
-    : computeHunks(oldText, newText);
+    : (perEdit?.hunks ?? computeHunks(oldText, newText));
   return {
     proposal: { id, path, isNewFile, hunks, callHash, explanation: input.explanation },
     newText,
@@ -108,6 +106,11 @@ export class ProposalStore {
     return this.run(runId).proposals.get(id);
   }
 
+  /** Pre-proposal text, for staging the review buffer. */
+  beforeText(runId: string, id: string): string | null | undefined {
+    return this.run(runId).before.get(id)?.text;
+  }
+
   decide(runId: string, id: string, hunkId: string, decision: 'accepted' | 'rejected'): void {
     const hunk = this.run(runId).proposals.get(id)?.hunks.find((h) => h.id === hunkId);
     if (hunk) {
@@ -127,7 +130,7 @@ export class ProposalStore {
     return undefined;
   }
 
-  /** Final text for a fully-decided proposal. Throws otherwise. */
+  /** Final text for a fully-decided proposal, or throws. */
   finalizedText(runId: string, id: string): { path: string; text: string; before: string | null } {
     const state = this.run(runId);
     const proposal = state.proposals.get(id);
