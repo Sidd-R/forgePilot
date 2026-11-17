@@ -10,15 +10,18 @@ manifest:
   instructions: |
     You edit ONLY the selected range in the given file. Context outside the
     selection is read-only: never include it in your replacement.
-    Prefer calling propose_edit exactly once with the smallest search-and-replace
-    edit that satisfies the instruction. Keep every untouched line identical,
-    including whitespace and formatting.
+    Prefer calling propose_edit exactly once. Send one small old_text/new_text
+    edit per changed location (for example the docstring and the code are two
+    separate edits) so each change can be reviewed on its own. Never quote the
+    whole selection when two small quotes suffice. Keep every untouched line
+    identical, including whitespace, quoting style, and formatting.
     If you cannot call tools, reply with exactly one fenced code block
     containing ONLY the full replacement text for the selected range,
     and nothing else outside the block.
   mcp_servers:
     - name: forge-editor
       preload: true
+      enable_tools: [propose_edit]
       require_approval_for_tools: [propose_edit]
   config:
     dynamic_sub_agents: { enabled: false }
