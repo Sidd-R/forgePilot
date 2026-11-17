@@ -5,10 +5,9 @@ import { applyHunks, computeHunks } from './diff';
 import { applyEditsToText } from './matcher';
 
 /**
- * SINGLE DISK-WRITE PATH. Only this module may change files on disk or
- * in editor buffers, and only for hunks the user accepted. The writeguard
- * test enforces this statically. `vscode` is injected (type-only import)
- * so unit tests run in plain Node.
+ * SINGLE DISK-WRITE PATH. Only this module may change files, and only
+ * for hunks the user accepted (writeguard test enforces this). `vscode`
+ * is injected (type-only import) so unit tests run in plain Node.
  */
 
 let vs: typeof vscode | undefined;
@@ -54,25 +53,11 @@ export function createProposal(
   const oldText = currentText ?? '';
   const newText =
     input.content !== undefined ? input.content : applyEditsToText(oldText, input.edits);
-  const hunks = isNewFile
-    ? [
-        {
-          id: 'h1',
-          startLine: 1,
-          oldLines: [],
-          newLines: newText.split('\n'),
-        } satisfies Hunk,
-      ]
+  const hunks: Hunk[] = isNewFile
+    ? [{ id: 'h1', startLine: 1, oldLines: [], newLines: newText.split('\n') }]
     : computeHunks(oldText, newText);
   return {
-    proposal: {
-      id,
-      path,
-      isNewFile,
-      hunks,
-      callHash,
-      explanation: input.explanation,
-    },
+    proposal: { id, path, isNewFile, hunks, callHash, explanation: input.explanation },
     newText,
   };
 }
@@ -84,11 +69,8 @@ export interface Restore {
 }
 
 interface RunState {
-  /** Original text before the run touched each file. */
   checkpoints: Map<string, string | null>;
-  /** Proposal ids in application order. */
   order: string[];
-  /** Pre-proposal text per proposal for Undo Last Change. */
   before: Map<string, { path: string; text: string | null }>;
   proposals: Map<string, Proposal>;
 }
@@ -106,7 +88,7 @@ export class ProposalStore {
     return state;
   }
 
-  /** Record the original text once, before the run first touches a file. */
+  /** Record original text once, before the run first touches a file. */
   ensureCheckpoint(runId: string, path: string, text: string | null): void {
     const state = this.run(runId);
     if (!state.checkpoints.has(path)) {
@@ -114,11 +96,7 @@ export class ProposalStore {
     }
   }
 
-  addProposal(
-    runId: string,
-    proposal: Proposal,
-    beforeText: string | null,
-  ): void {
+  addProposal(runId: string, proposal: Proposal, beforeText: string | null): void {
     const state = this.run(runId);
     this.ensureCheckpoint(runId, proposal.path, beforeText);
     state.proposals.set(proposal.id, proposal);
@@ -131,11 +109,40 @@ export class ProposalStore {
   }
 
   decide(runId: string, id: string, hunkId: string, decision: 'accepted' | 'rejected'): void {
-    const proposal = this.run(runId).proposals.get(id);
-    const hunk = proposal?.hunks.find((h) => h.id === hunkId);
+    const hunk = this.run(runId).proposals.get(id)?.hunks.find((h) => h.id === hunkId);
     if (hunk) {
       hunk.decision = decision;
     }
+  }
+
+  /** Find a staged proposal by its call hash (tool calls carry no run id). */
+  findByHash(callHash: string): { runId: string; proposal: Proposal } | undefined {
+    for (const [runId, state] of this.runs) {
+      for (const proposal of state.proposals.values()) {
+        if (proposal.callHash === callHash) {
+          return { runId, proposal };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** Final text for a fully-decided proposal. Throws otherwise. */
+  finalizedText(runId: string, id: string): { path: string; text: string; before: string | null } {
+    const state = this.run(runId);
+    const proposal = state.proposals.get(id);
+    const before = state.before.get(id);
+    if (!proposal || !before) {
+      throw new Error('unknown proposal');
+    }
+    if (proposal.hunks.some((h) => !h.decision)) {
+      throw new Error('proposal was never reviewed');
+    }
+    return {
+      path: proposal.path,
+      text: ProposalStore.acceptedText(before.text ?? '', proposal),
+      before: before.text,
+    };
   }
 
   /** Restore the most recently added proposal to its pre-proposal text. */
@@ -154,10 +161,7 @@ export class ProposalStore {
   /** Restore every file the run touched; delete files it created. */
   undoRun(runId: string): Restore[] {
     const state = this.run(runId);
-    const restores: Restore[] = [];
-    for (const [path, text] of state.checkpoints) {
-      restores.push({ path, text });
-    }
+    const restores = [...state.checkpoints].map(([path, text]) => ({ path, text }));
     this.runs.delete(runId);
     return restores;
   }
@@ -182,8 +186,7 @@ function uriFor(rootDir: string, relPath: string): vscode.Uri {
 /** Current text, or null when the file does not exist. */
 export async function readText(rootDir: string, relPath: string): Promise<string | null> {
   try {
-    const doc = await api().workspace.openTextDocument(uriFor(rootDir, relPath));
-    return doc.getText();
+    return (await api().workspace.openTextDocument(uriFor(rootDir, relPath))).getText();
   } catch {
     return null;
   }
@@ -216,10 +219,7 @@ export async function writeFile(
   relPath: string,
   text: string,
 ): Promise<void> {
-  await api().workspace.fs.writeFile(
-    uriFor(rootDir, relPath),
-    Buffer.from(text, 'utf8'),
-  );
+  await api().workspace.fs.writeFile(uriFor(rootDir, relPath), Buffer.from(text, 'utf8'));
 }
 
 /** Delete a file the run created. Missing files are ignored. */
@@ -232,10 +232,7 @@ export async function deleteFile(rootDir: string, relPath: string): Promise<void
 }
 
 /** Apply undo restores: rewrite originals, delete created files. */
-export async function applyRestores(
-  rootDir: string,
-  restores: Restore[],
-): Promise<void> {
+export async function applyRestores(rootDir: string, restores: Restore[]): Promise<void> {
   for (const restore of restores) {
     if (restore.text === null) {
       await deleteFile(rootDir, restore.path);
