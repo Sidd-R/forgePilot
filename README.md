@@ -20,10 +20,11 @@ npm install
 npm run build
 ```
 
-Start TrueForge (in another terminal):
+Start TrueForge (in another terminal). The loopback allowlist is required:
+TrueForge refuses to call MCP servers on `127.0.0.1` without it.
 
 ```bash
-npx @truefoundry/trueforge@latest
+OUTBOUND_URL_ALLOWED_HOSTS='["127.0.0.1","localhost"]' npx @truefoundry/trueforge@latest
 ```
 
 Add models under Settings → Models in the TrueForge UI
@@ -55,3 +56,7 @@ npm run validate
 - `src/panel/` — agent panel webview.
 
 No model provider is ever called directly; only TrueForge talks to models.
+
+The extension uses TrueForge's REST + SSE API directly instead of the
+TypeScript SDK (the gate allows either): the published SDK cannot load under
+Node's CommonJS resolver.
