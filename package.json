@@ -1,0 +1,159 @@
+{
+  "name": "forgepilot",
+  "displayName": "ForgePilot",
+  "description": "Thin-client VS Code coding agent. The agent loop runs on local TrueForge; this extension provides the editor UI and MCP tools.",
+  "version": "0.0.1",
+  "publisher": "sidebar-syndicate",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=22.14.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onCommand:forgePilot.inlineEdit",
+    "onCommand:forgePilot.openAgent",
+    "onView:forgePilot.panel"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "build": "node esbuild.js",
+    "test:unit": "tsc && node --test \"out/test/unit/**/*.test.js\"",
+    "test:integration": "tsc && node --test \"out/test/integration/**/*.test.js\" --test-timeout=120000",
+    "validate": "npm run typecheck && npm run lint && npm run build && npm run test:unit && npm run test:integration",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@truefoundry/trueforge-sdk": "^0.185.0",
+    "minisearch": "^7.2.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.18.0",
+    "typescript": "~5.7.0",
+    "typescript-eslint": "^8.20.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "forgePilot.inlineEdit",
+        "title": "ForgePilot: Inline Edit"
+      },
+      {
+        "command": "forgePilot.openAgent",
+        "title": "ForgePilot: Open Agent"
+      },
+      {
+        "command": "forgePilot.cancel",
+        "title": "ForgePilot: Cancel"
+      },
+      {
+        "command": "forgePilot.acceptHunk",
+        "title": "ForgePilot: Accept Hunk"
+      },
+      {
+        "command": "forgePilot.rejectHunk",
+        "title": "ForgePilot: Reject Hunk"
+      },
+      {
+        "command": "forgePilot.acceptAll",
+        "title": "ForgePilot: Accept All Hunks"
+      },
+      {
+        "command": "forgePilot.rejectAll",
+        "title": "ForgePilot: Reject All Hunks"
+      },
+      {
+        "command": "forgePilot.undoLast",
+        "title": "ForgePilot: Undo Last Change"
+      },
+      {
+        "command": "forgePilot.undoRun",
+        "title": "ForgePilot: Undo Run"
+      },
+      {
+        "command": "forgePilot.loadAgents",
+        "title": "ForgePilot: Load Agent Definitions"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "forgePilot.inlineEdit",
+        "key": "ctrl+alt+k",
+        "mac": "cmd+alt+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "forgePilot.openAgent",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l"
+      }
+    ],
+    "configuration": {
+      "title": "ForgePilot",
+      "properties": {
+        "forgepilot.trueforge.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:8790",
+          "description": "Base URL of the local TrueForge server."
+        },
+        "forgepilot.models.primary": {
+          "type": "string",
+          "default": "",
+          "description": "Primary TrueForge model name (provider/model). Required."
+        },
+        "forgepilot.models.fallbacks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Ordered fallback TrueForge model names to try after the primary fails."
+        },
+        "forgepilot.context.tokenBudget": {
+          "type": "number",
+          "default": 8000,
+          "description": "Token budget for the automatic context pack."
+        },
+        "forgepilot.mcp.port": {
+          "type": "number",
+          "default": 0,
+          "description": "Port for the local MCP server. 0 picks a free port."
+        }
+      }
+    },
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "forgePilot.panel",
+          "name": "ForgePilot"
+        }
+      ]
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "forgePilot.acceptAll",
+          "when": "forgePilot.reviewActive",
+          "group": "navigation"
+        },
+        {
+          "command": "forgePilot.rejectAll",
+          "when": "forgePilot.reviewActive",
+          "group": "navigation"
+        }
+      ]
+    }
+  }
+}

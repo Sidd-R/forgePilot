@@ -1,0 +1,33 @@
+# agents/forgepilot-inline.yaml
+name: forgepilot-inline
+description: Lean single-selection edit agent for ForgePilot inline edit
+manifest:
+  model:
+    name: <provider>/<model>        # replaced from extension settings
+    params:
+      temperature: 0
+      parallel_tool_calls: false
+  instructions: |
+    You edit ONLY the selected range in the given file. Context outside the
+    selection is read-only: never include it in your replacement.
+    Prefer calling propose_edit exactly once with the smallest search-and-replace
+    edit that satisfies the instruction. Keep every untouched line identical,
+    including whitespace and formatting.
+    If you cannot call tools, reply with exactly one fenced code block
+    containing ONLY the full replacement text for the selected range,
+    and nothing else outside the block.
+  mcp_servers:
+    - name: forge-editor
+      preload: true
+      require_approval_for_tools: [propose_edit]
+  config:
+    dynamic_sub_agents: { enabled: false }
+    ask_user_questions: { enabled: false }
+    generative_ui: { enabled: false }
+    web_search: { enabled: false }
+    sandbox: { enabled: false }
+    iteration_limit: 6
+    context_management:
+      compaction:
+        enabled: true
+        trigger: { type: input_tokens, value: 60000 }
