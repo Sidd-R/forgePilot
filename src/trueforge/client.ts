@@ -2,106 +2,37 @@
  * TrueForge HTTP client. Uses the REST + SSE API directly: the published
  * TypeScript SDK cannot load under Node's CommonJS resolver (its package
  * ships `type: module` with `.js` CommonJS files), and the eligibility gate
- * explicitly allows the HTTP API. Wire field names are snake_case.
+ * explicitly allows the HTTP API.
  */
+import { readSse } from './sse';
+import type {
+  ApprovalRequest,
+  StreamCursor,
+  TurnEventCallback,
+  TurnTerminal,
+  WireAgentSpec,
+} from './wire';
 
-export interface WireAgentSpec {
-  model: { name: string; params?: Record<string, unknown> };
-  instructions?: string;
-  mcp_servers?: Array<{
-    name: string;
-    preload?: boolean;
-    preload_tools?: string[];
-    enable_tools?: string[];
-    require_approval_for_tools?: string[];
-  }>;
-  config?: Record<string, unknown>;
-}
+/** HTTP failure with status for retry classification. */
+export class HttpError extends Error {
+  readonly status: number;
+  readonly body: string;
 
-/** One streamed turn event. Only the fields ForgePilot reads are typed. */
-export interface WireEvent {
-  type: string;
-  id: string;
-  turn_id?: string;
-  thread_id?: string | null;
-  state?: { status: string; message?: string | null };
-  tool_calls?: Array<{ id: string; source_event_id: string }>;
-  [key: string]: unknown;
-}
-
-/** Terminal state of a streamed turn. */
-export interface TurnTerminal {
-  status: string;
-  message?: string;
-}
-
-export interface ApprovalRequest {
-  threadId: string;
-  toolCallId: string;
-  sourceEventId: string;
-}
-
-/** Mutable cursor handed to the event callback as the stream advances. */
-export interface StreamCursor {
-  turnId: string;
-  lastEventId: string;
-}
-
-export type TurnEventCallback = (
-  event: WireEvent,
-  cursor: StreamCursor,
-) => void | Promise<void>;
-
-function parseSseFrame(frame: string): WireEvent[] {
-  const out: WireEvent[] = [];
-  for (const line of frame.split('\n')) {
-    const text = line.trim();
-    if (!text.startsWith('data:')) {
-      continue;
-    }
-    const payload = text.slice('data:'.length).trim();
-    if (!payload || payload === '[DONE]') {
-      continue;
-    }
-    try {
-      out.push(JSON.parse(payload) as WireEvent);
-    } catch {
-      // Ignore malformed frames; the stream stays usable.
-    }
+  constructor(method: string, path: string, status: number, body: string) {
+    super(`TrueForge ${method} ${path} failed (${status}): ${body.slice(0, 300)}`);
+    this.name = 'HttpError';
+    this.status = status;
+    this.body = body;
   }
-  return out;
 }
 
-async function* readSse(res: Response): AsyncGenerator<WireEvent> {
-  const reader = res.body?.getReader();
-  if (!reader) {
-    return;
-  }
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    let cut = buffer.indexOf('\n\n');
-    while (cut >= 0) {
-      const frame = buffer.slice(0, cut);
-      buffer = buffer.slice(cut + 2);
-      yield* parseSseFrame(frame);
-      cut = buffer.indexOf('\n\n');
-    }
-    if (done) {
-      break;
-    }
-  }
-  if (buffer.trim()) {
-    yield* parseSseFrame(buffer);
-  }
+export interface StreamOptions {
+  signal?: AbortSignal;
 }
 
 /**
  * Thin wrapper over TrueForge sessions, streamed turns, approval answers,
- * and cancellation. Retry/fallback policy arrives with the resilience
- * track; the spike needs the straight-line path only.
+ * and cancellation. Retry/fallback policy lives in resilience.ts.
  */
 export class TrueForgeClient {
   constructor(
@@ -113,18 +44,27 @@ export class TrueForgeClient {
     method: string,
     path: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<Response> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: signal ?? AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      if (signal?.aborted) {
+        throw err;
+      }
+      throw new Error(
+        `TrueForge ${method} ${path} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(
-        `TrueForge ${method} ${path} failed (${res.status}): ${text.slice(0, 300)}`,
-      );
+      throw new HttpError(method, path, res.status, text);
     }
     return res;
   }
@@ -187,6 +127,7 @@ export class TrueForgeClient {
     sessionId: string,
     input: string,
     onEvent: TurnEventCallback,
+    opts?: StreamOptions,
   ): Promise<TurnTerminal> {
     const cursor: StreamCursor = { turnId: '', lastEventId: '' };
     let res = await this.request(
@@ -196,6 +137,7 @@ export class TrueForgeClient {
         input: [{ type: 'user.message', content: input }],
         stream: true,
       },
+      opts?.signal,
     );
     let resubscribed = 0;
 
@@ -213,6 +155,9 @@ export class TrueForgeClient {
           };
         }
       }
+      if (opts?.signal?.aborted) {
+        throw new Error('Turn stream aborted.');
+      }
       // Stream ended without turn.done: the turn is paused or the
       // connection dropped. Resubscribe a bounded number of times.
       resubscribed += 1;
@@ -223,19 +168,9 @@ export class TrueForgeClient {
         'GET',
         `/api/v1/sessions/${sessionId}/turns/${cursor.turnId}/subscribe` +
           `?after_event_id=${encodeURIComponent(cursor.lastEventId)}`,
+        undefined,
+        opts?.signal,
       );
     }
   }
-}
-
-/** Pull the pending approvals out of a pause event. */
-export function approvalsOf(event: WireEvent): ApprovalRequest[] {
-  if (event.type !== 'tool.approval_required') {
-    return [];
-  }
-  return (event.tool_calls ?? []).map((call) => ({
-    threadId: event.thread_id ?? 'main',
-    toolCallId: call.id,
-    sourceEventId: call.source_event_id,
-  }));
 }

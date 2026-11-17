@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { startMcpServer } from '../../src/mcp/server';
 import type { RunningMcpServer } from '../../src/mcp/server';
-import { TrueForgeClient, approvalsOf } from '../../src/trueforge/client';
+import { TrueForgeClient } from '../../src/trueforge/client';
+import { approvalsOf } from '../../src/trueforge/wire';
 import {
   registerMcpServer,
   unregisterMcpServer,
