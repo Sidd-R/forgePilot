@@ -147,7 +147,7 @@ export class TrueForgeClient {
         if (event.type === 'turn.created' && event.turn_id) {
           cursor.turnId = event.turn_id;
         }
-        await onEvent(event, cursor);
+        await onEvent(event, cursor, { sessionId });
         if (event.type === 'turn.done' && event.state) {
           return {
             status: event.state.status,

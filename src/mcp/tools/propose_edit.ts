@@ -86,22 +86,34 @@ export async function applyPreparedProposal(
       'No recorded user decision for this edit; it was never reviewed. Rejecting.',
     );
   }
-  const final = deps.store.finalizedText(found.runId, found.proposal.id);
-  const current = await deps.readText(rel);
+  return applyDecidedProposal(deps, found.runId, found.proposal.id);
+}
+
+/**
+ * Apply a fully-reviewed proposal's accepted hunks, with the same
+ * staleness guard. Used by the tool path and the inline fenced path.
+ */
+export async function applyDecidedProposal(
+  deps: ProposeEditDeps,
+  runId: string,
+  proposalId: string,
+): Promise<ApplyOutcome> {
+  const proposal = deps.store.getProposal(runId, proposalId);
+  if (!proposal) {
+    throw new Error('Unknown proposal.');
+  }
+  const final = deps.store.finalizedText(runId, proposalId);
+  const current = await deps.readText(final.path);
   if (current !== final.before && current !== final.text) {
     throw new Error(
-      `File ${rel} changed since review; refusing to apply a stale proposal. Re-read it first.`,
+      `File ${final.path} changed since review; refusing to apply a stale proposal. Re-read it first.`,
     );
   }
   if (current !== final.text) {
-    await deps.writeFinal(rel, final.text);
+    await deps.writeFinal(final.path, final.text);
   }
-  const applied = found.proposal.hunks
-    .filter((h) => h.decision === 'accepted')
-    .map((h) => h.id);
-  const rejected = found.proposal.hunks
-    .filter((h) => h.decision === 'rejected')
-    .map((h) => h.id);
+  const applied = proposal.hunks.filter((h) => h.decision === 'accepted').map((h) => h.id);
+  const rejected = proposal.hunks.filter((h) => h.decision === 'rejected').map((h) => h.id);
   return {
     applied,
     rejected,

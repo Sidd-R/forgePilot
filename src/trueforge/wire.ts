@@ -20,7 +20,13 @@ export interface WireEvent {
   turn_id?: string;
   thread_id?: string | null;
   state?: { status: string; message?: string | null };
-  tool_calls?: Array<{ id: string; source_event_id: string }>;
+  tool_calls?: Array<{
+    id: string;
+    /** Present on approval refs; absent on model.message calls. */
+    source_event_id?: string;
+    function?: { name?: string; arguments?: string };
+    [key: string]: unknown;
+  }>;
   [key: string]: unknown;
 }
 
@@ -45,6 +51,7 @@ export interface StreamCursor {
 export type TurnEventCallback = (
   event: WireEvent,
   cursor: StreamCursor,
+  info: { sessionId: string },
 ) => void | Promise<void>;
 
 /** Pull the pending approvals out of a pause event. */
@@ -55,6 +62,6 @@ export function approvalsOf(event: WireEvent): ApprovalRequest[] {
   return (event.tool_calls ?? []).map((call) => ({
     threadId: event.thread_id ?? 'main',
     toolCallId: call.id,
-    sourceEventId: call.source_event_id,
+    sourceEventId: call.source_event_id ?? '',
   }));
 }

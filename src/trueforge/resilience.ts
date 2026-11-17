@@ -89,6 +89,7 @@ export interface ResilientTurnOptions {
   models: string[];
   onEvent: TurnEventCallback;
   onNotice: (message: string) => void;
+  onSession?: (sessionId: string) => void;
   silenceTimeoutMs?: number;
 }
 
@@ -135,12 +136,13 @@ export async function runTurnResilient(
       try {
         // Fresh session per attempt: cheap, and never inherits a poisoned one.
         const sessionId = await deps.createSession(spec);
+        opts.onSession?.(sessionId);
         const terminal = await deps.streamTurn(
           sessionId,
           opts.input,
-          (event, cursor) => {
+          (event, cursor, info) => {
             timer.refresh();
-            return opts.onEvent(event, cursor);
+            return opts.onEvent(event, cursor, info);
           },
           { signal: controller.signal },
         );

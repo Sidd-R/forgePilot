@@ -138,6 +138,10 @@ export interface TranscriptEvent {
     | 'status'
     | 'notice';
   text: string;
+  /** Wire event id; deltas merge into their base message by id. */
+  id?: string;
+  /** True for streaming delta fragments. */
+  delta?: boolean;
   tool?: string;
   durationMs?: number;
   resultBytes?: number;
