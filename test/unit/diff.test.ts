@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyHunks, computeHunks } from '../../src/edits/diff';
+import { applyHunks, computeHunks, createEditHunks } from '../../src/edits/diff';
 
 describe('computeHunks', () => {
   it('yields no hunks for identical text', () => {
@@ -54,6 +54,50 @@ describe('computeHunks', () => {
       applyHunks('', hunks, new Set(hunks.map((h) => h.id))),
       'a\nb\n',
     );
+  });
+});
+
+describe('createEditHunks', () => {
+  it('makes one hunk per edit even when adjacent', () => {
+    const oldText = 'def f():\n    """Doc."""\n    val = g()\n    return val == "1"\n';
+    const result = createEditHunks(oldText, [
+      { old_text: '    """Doc."""', new_text: '    """Doc v2."""' },
+      { old_text: '    return val == "1"', new_text: '    return val == "2"' },
+    ]);
+    assert.ok(result);
+    assert.equal(result.hunks.length, 2);
+    assert.equal(result.hunks[0].startLine, 2);
+    assert.equal(result.hunks[1].startLine, 4);
+    assert.equal(
+      result.newText,
+      'def f():\n    """Doc v2."""\n    val = g()\n    return val == "2"\n',
+    );
+  });
+
+  it('handles partial-line matches with prefix and suffix', () => {
+    const result = createEditHunks('x = foo(1)\n', [
+      { old_text: 'foo(1)', new_text: 'bar(2)' },
+    ]);
+    assert.ok(result);
+    assert.deepEqual(result.hunks[0].oldLines, ['x = foo(1)']);
+    assert.deepEqual(result.hunks[0].newLines, ['x = bar(2)']);
+    assert.equal(result.newText, 'x = bar(2)\n');
+  });
+
+  it('falls back to null on overlapping edits', () => {
+    const result = createEditHunks('aaa\n', [
+      { old_text: 'aaa', new_text: 'b' },
+      { old_text: 'aaa\n', new_text: 'c\n' },
+    ]);
+    assert.equal(result, null);
+  });
+
+  it('falls back to null when edits share a line', () => {
+    const result = createEditHunks('a = 1; b = 2\n', [
+      { old_text: 'a = 1', new_text: 'a = 10' },
+      { old_text: 'b = 2', new_text: 'b = 20' },
+    ]);
+    assert.equal(result, null);
   });
 });
 
