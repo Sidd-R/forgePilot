@@ -16,6 +16,14 @@
   "activationEvents": [
     "onCommand:forgePilot.inlineEdit",
     "onCommand:forgePilot.openAgent",
+    "onCommand:forgePilot.cancel",
+    "onCommand:forgePilot.acceptHunk",
+    "onCommand:forgePilot.rejectHunk",
+    "onCommand:forgePilot.acceptAll",
+    "onCommand:forgePilot.rejectAll",
+    "onCommand:forgePilot.undoLast",
+    "onCommand:forgePilot.undoRun",
+    "onCommand:forgePilot.loadAgents",
     "onView:forgePilot.panel"
   ],
   "main": "./dist/extension.js",
