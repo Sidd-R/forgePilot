@@ -4,8 +4,10 @@ import { loadAgentFile, syncAgent } from './trueforge/agents';
 import { CodeIndex } from './context/index';
 import { applyRestores, readText } from './edits/proposals';
 import { runInlineEdit, type InlineTarget } from './inline/controller';
+import { PanelHost } from './panel/host';
 
 let host: Host | undefined;
+let panel: PanelHost | undefined;
 
 function captureTarget(editor: vscode.TextEditor, index: CodeIndex): InlineTarget | undefined {
   const doc = editor.document;
@@ -172,7 +174,13 @@ export function activate(context: vscode.ExtensionContext): void {
   void buildHost(context.extensionUri).then(
     (h) => {
       host = h;
+      panel = new PanelHost(
+        h,
+        { cancel: cancelActive, undoLast, undoRun },
+        context.extensionUri,
+      );
       context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider('forgePilot.panel', panel),
         vscode.languages.registerCodeLensProvider({ scheme: 'file' }, h.review.view),
         vscode.workspace.onDidCloseTextDocument((doc) => {
           const found = h.review.reviewForUri(doc.uri);
@@ -188,7 +196,7 @@ export function activate(context: vscode.ExtensionContext): void {
         }),
         vscode.commands.registerCommand('forgePilot.inlineEdit', runInlineCommand),
         vscode.commands.registerCommand('forgePilot.openAgent', () => {
-          void vscode.window.showInformationMessage('ForgePilot: agent panel lands with the panel track.');
+          panel?.reveal();
         }),
         vscode.commands.registerCommand('forgePilot.cancel', cancelActive),
         vscode.commands.registerCommand(

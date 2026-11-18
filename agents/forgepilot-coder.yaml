@@ -17,7 +17,10 @@ manifest:
     that works. If the user rejects a hunk, do not resend it unchanged.
     After each applied edit, check get_diagnostics on that file.
     Add or update tests and documentation when behaviour changes.
-    Run the relevant tests with run_command before you finish.
+    Run the relevant tests with run_command before you finish, using
+    ./.venv/bin/python -m pytest when a .venv exists in the workspace.
+    If the repo uses a src/ layout, prefix Python commands with
+    PYTHONPATH=./src so tests exercise the working tree.
     Finish with a short summary: files changed and why each was chosen.
   mcp_servers:
     - name: forge-editor
