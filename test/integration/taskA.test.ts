@@ -21,8 +21,8 @@ const MODEL = 'muse/muse-spark-1-3-contributor';
 const FIXTURE = '/Users/siddhant/Projects/SideBarSyndicate/flask-fixture';
 const VENV_PY = path.join(FIXTURE, '.venv', 'bin', 'python');
 const INSTRUCTION =
-  "In get_debug_flag, treat 'off' and 'n' as false too, case-insensitively, " +
-  'and update the docstring to list every false value.';
+  "Treat the values 'off' and 'n' as false as well, case-insensitively, " +
+  'and update the docstring to list every value that is treated as false.';
 
 /**
  * Task A rehearsal without the editor: the real inline agent turn runs
