@@ -1,4 +1,6 @@
 // Agent panel UI: prompt box with @ completion, context card, transcript.
+import { TranscriptStore } from './transcript';
+
 declare function acquireVsCodeApi(): {
   postMessage(message: unknown): void;
   getState(): unknown;
@@ -6,6 +8,7 @@ declare function acquireVsCodeApi(): {
 };
 
 const vscode = acquireVsCodeApi();
+const transcript = new TranscriptStore();
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id);
@@ -129,6 +132,7 @@ window.addEventListener('message', (event: MessageEvent<Inbound>) => {
     log.textContent = '';
     card.innerHTML = '<span class="ctx-empty">Context will appear here.</span>';
     spans.clear();
+    transcript.clear();
   } else if (message.type === 'runState') {
     sendButton.disabled = message.running ?? false;
     sendButton.textContent = message.running ? 'Running…' : 'Send';
@@ -138,29 +142,20 @@ window.addEventListener('message', (event: MessageEvent<Inbound>) => {
 });
 
 function appendTranscript(item: { kind: string; text: string; id?: string; delta?: boolean }): void {
-  if (item.delta && item.id) {
-    let span = spans.get(item.id);
-    if (!span) {
-      span = document.createElement('span');
-      spans.set(item.id, span);
-      const div = document.createElement('div');
-      div.className = 'msg';
-      div.appendChild(span);
-      log.appendChild(div);
+  const line = transcript.append(item);
+  let span = spans.get(line.key);
+  if (!span) {
+    span = document.createElement('span');
+    spans.set(line.key, span);
+    const div = document.createElement('div');
+    div.className = KIND_CLASS[line.kind] ?? 'msg';
+    if (line.kind !== 'text') {
+      div.append(`[${line.kind}] `);
     }
-    span.textContent += item.text;
-    return;
+    div.appendChild(span);
+    log.appendChild(div);
   }
-  if (item.id && spans.has(item.id)) {
-    return;
-  }
-  const div = document.createElement('div');
-  div.className = KIND_CLASS[item.kind] ?? 'msg';
-  div.textContent = item.kind === 'text' ? item.text : `[${item.kind}] ${item.text}`;
-  log.appendChild(div);
-  if (item.id) {
-    spans.set(item.id, document.createElement('span'));
-  }
+  span.textContent = line.text;
 }
 
 function renderComplete(items: string[]): void {
