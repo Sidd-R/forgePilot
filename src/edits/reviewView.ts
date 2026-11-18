@@ -75,10 +75,15 @@ export class ReviewView implements vscode.CodeLensProvider {
   readonly onDidChangeCodeLenses = this.lensChanged.event;
 
   private readonly addedType = vscode.window.createTextEditorDecorationType({
-    backgroundColor: 'rgba(46, 160, 67, 0.25)',
+    backgroundColor: new vscode.ThemeColor('diffEditor.insertedTextBackground'),
+    overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.addedForeground'),
+    overviewRulerLane: vscode.OverviewRulerLane.Full,
     isWholeLine: true,
   });
-  private readonly removedType = vscode.window.createTextEditorDecorationType({});
+  private readonly removedType = vscode.window.createTextEditorDecorationType({
+    overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.deletedForeground'),
+    overviewRulerLane: vscode.OverviewRulerLane.Full,
+  });
 
   constructor(private readonly getReviews: () => OpenReview[]) {}
 
@@ -142,7 +147,7 @@ export class ReviewView implements vscode.CodeLensProvider {
           renderOptions: {
             before: {
               contentText: hunk.oldLines.join('\n'),
-              backgroundColor: 'rgba(248, 81, 73, 0.25)',
+              backgroundColor: new vscode.ThemeColor('diffEditor.removedTextBackground'),
             },
           },
         });

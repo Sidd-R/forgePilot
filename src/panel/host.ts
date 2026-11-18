@@ -174,16 +174,33 @@ export class PanelHost implements vscode.WebviewViewProvider {
 <html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline';">
 <style>
-body { font-family: var(--vscode-font-family); padding: 8px; }
-#card { border: 1px solid var(--vscode-panel-border); padding: 6px; margin-bottom: 8px; font-size: 12px; white-space: pre-wrap; }
-#log { white-space: pre-wrap; font-size: 12px; margin-bottom: 8px; }
-#prompt { width: 100%; box-sizing: border-box; }
-.row { display: flex; gap: 6px; margin-top: 6px; }
-#complete { border: 1px solid var(--vscode-panel-border); display: none; }
-#complete div { padding: 4px; cursor: pointer; }
+body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); background: var(--vscode-sideBar-background); padding: 10px 12px; margin: 0; }
+#card { background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 12px; }
+#card .ctx-head { color: var(--vscode-descriptionForeground); margin-bottom: 4px; }
+#card .ctx-row { display: flex; gap: 8px; padding: 1px 0; }
+#card .ctx-file { font-family: var(--vscode-editor-font-family); white-space: nowrap; }
+#card .ctx-reason { color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#card .ctx-tokens { margin-left: auto; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+#card .ctx-empty { color: var(--vscode-descriptionForeground); }
+#log { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.msg { white-space: pre-wrap; word-break: break-word; line-height: 1.45; font-size: 13px; }
+.msg-tool { font-family: var(--vscode-editor-font-family); font-size: 11.5px; color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 4px 8px; }
+.msg-approval { background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+.msg-notice { color: var(--vscode-descriptionForeground); font-style: italic; font-size: 12px; }
+#prompt { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; padding: 6px 8px; font-family: inherit; font-size: 13px; resize: vertical; }
+#prompt:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.row button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; border-radius: 2px; padding: 4px 12px; cursor: pointer; }
+.row button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+#send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+#send:hover { background: var(--vscode-button-hoverBackground); }
+#send:disabled { opacity: 0.6; cursor: default; }
+#complete { background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; display: none; margin-top: 4px; }
+#complete div { padding: 4px 8px; cursor: pointer; font-size: 12px; }
+#complete div:hover { background: var(--vscode-list-hoverBackground); }
 </style></head>
 <body>
-<div id="card">Context will appear here.</div>
+<div id="card"><span class="ctx-empty">Context will appear here.</span></div>
 <div id="log"></div>
 <textarea id="prompt" rows="3" placeholder="Ask anything (@file, @symbol)"></textarea>
 <div id="complete"></div>
