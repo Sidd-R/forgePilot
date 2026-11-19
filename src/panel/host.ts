@@ -54,7 +54,7 @@ export class PanelHost implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
-    view.webview.options = { enableScripts: true, retainContextWhenHidden: true };
+    view.webview.options = { enableScripts: true };
     view.webview.html = panelHtml(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage((message: PanelInbound) => {
       void this.onMessage(message);

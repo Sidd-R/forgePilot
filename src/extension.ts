@@ -154,7 +154,9 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   };
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('forgePilot.panel', panelProvider),
+    vscode.window.registerWebviewViewProvider('forgePilot.panel', panelProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
     vscode.commands.registerCommand('forgePilot.inlineEdit', () => inlineEdit(context)),
     vscode.commands.registerCommand('forgePilot.openAgent', () => {
       void vscode.commands.executeCommand('forgePilot.panel.focus');
