@@ -1,6 +1,6 @@
 import type { TranscriptEvent } from '../types';
 import type { TrueForgeClient } from '../trueforge/client';
-import { runTurnResilient, type TurnDeps } from '../trueforge/resilience';
+import { TurnCancelledError, runTurnResilient, type TurnDeps } from '../trueforge/resilience';
 import type { TurnEventCallback, WireAgentSpec } from '../trueforge/wire';
 import type { ProposalStore } from '../edits/proposals';
 import type { ReviewPort } from '../edits/review';
@@ -74,9 +74,13 @@ export async function runAgentTurn(deps: AgentTurnDeps): Promise<AgentTurnResult
       onEvent,
       onNotice: deps.onNotice,
       onSession: deps.onSession,
+      isCancelled: deps.isCancelled,
     });
     return { status: result.terminal.status, model: result.model, sessionId: result.sessionId };
   } catch (err) {
+    if (err instanceof TurnCancelledError || deps.isCancelled()) {
+      return { status: 'cancelled', model: '', sessionId: '' };
+    }
     deps.onNotice(err instanceof Error ? err.message : String(err));
     return { status: 'error', model: '', sessionId: '' };
   }

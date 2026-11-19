@@ -86,6 +86,10 @@ export async function runInlineCommand(host: Host): Promise<void> {
     async (_progress, token) => {
       token.onCancellationRequested(() => {
         host.cancelled = true;
+        // Resolve any open review first: with the silence timer disarmed
+        // while paused, a pending review would wedge the loader forever,
+        // and its lenses and colors would haunt the editor.
+        void host.review.closeAllAsRejectAll(host.rootDir);
         if (host.activeSession) {
           void host.client.cancel(host.activeSession).catch(() => undefined);
         }

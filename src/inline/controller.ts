@@ -1,6 +1,11 @@
 import type { TranscriptEvent } from '../types';
 import type { TrueForgeClient } from '../trueforge/client';
-import { ExhaustedError, runTurnResilient, type TurnDeps } from '../trueforge/resilience';
+import {
+  ExhaustedError,
+  TurnCancelledError,
+  runTurnResilient,
+  type TurnDeps,
+} from '../trueforge/resilience';
 import type { TurnEventCallback, WireAgentSpec } from '../trueforge/wire';
 import type { ProposalStore } from '../edits/proposals';
 import { createProposal, hashArgs } from '../edits/proposals';
@@ -149,12 +154,16 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
       onEvent,
       onNotice: deps.onNotice,
       onSession: deps.onSession,
+      isCancelled: deps.isCancelled,
     });
     sessionId = result.sessionId;
     if (result.terminal.status === 'cancelled' || deps.isCancelled()) {
       return 'cancelled';
     }
   } catch (err) {
+    if (err instanceof TurnCancelledError || deps.isCancelled()) {
+      return 'cancelled';
+    }
     if (!(err instanceof ExhaustedError)) {
       throw err;
     }

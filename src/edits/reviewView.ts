@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { Hunk } from '../types';
+import { planDecorations, planLenses } from './reviewPlan';
 
 export interface ReviewResult {
   accepted: string[];
@@ -98,22 +99,19 @@ export class ReviewView implements vscode.CodeLensProvider {
         continue;
       }
       const starts = mapHunkLines(review.hunks, appliedOf(review));
-      for (const hunk of review.hunks) {
-        if (review.decided.has(hunk.id)) {
-          continue;
-        }
-        const line = (starts.get(hunk.id) ?? 1) - 1;
-        const range = new vscode.Range(line, 0, line, 0);
+      for (const lens of planLenses(
+        review.runId,
+        review.proposalId,
+        review.hunks,
+        review.decided,
+        starts,
+      )) {
+        const range = new vscode.Range(lens.line - 1, 0, lens.line - 1, 0);
         lenses.push(
           new vscode.CodeLens(range, {
-            title: `✓ Accept ${hunk.id}`,
-            command: 'forgePilot.acceptHunk',
-            arguments: [review.runId, review.proposalId, hunk.id],
-          }),
-          new vscode.CodeLens(range, {
-            title: `✗ Reject ${hunk.id}`,
-            command: 'forgePilot.rejectHunk',
-            arguments: [review.runId, review.proposalId, hunk.id],
+            title: lens.title,
+            command: lens.command,
+            arguments: lens.args,
           }),
         );
       }
@@ -131,28 +129,19 @@ export class ReviewView implements vscode.CodeLensProvider {
       return;
     }
     const starts = mapHunkLines(review.hunks, appliedOf(review));
-    const added: vscode.Range[] = [];
-    const removed: vscode.DecorationOptions[] = [];
-    for (const hunk of review.hunks) {
-      if (review.decided.has(hunk.id)) {
-        continue;
-      }
-      const start = (starts.get(hunk.id) ?? 1) - 1;
-      if (hunk.newLines.length > 0) {
-        added.push(new vscode.Range(start, 0, start + hunk.newLines.length - 1, 1_000_000));
-      }
-      if (hunk.oldLines.length > 0) {
-        removed.push({
-          range: new vscode.Range(start, 0, start, 0),
-          renderOptions: {
-            before: {
-              contentText: hunk.oldLines.join('\n'),
-              backgroundColor: new vscode.ThemeColor('diffEditor.removedTextBackground'),
-            },
-          },
-        });
-      }
-    }
+    const plan = planDecorations(review.hunks, review.decided, starts);
+    const added = plan.added.map(
+      (span) => new vscode.Range(span.startLine - 1, 0, span.endLine - 1, 1_000_000),
+    );
+    const removed: vscode.DecorationOptions[] = plan.removed.map((span) => ({
+      range: new vscode.Range(span.line - 1, 0, span.line - 1, 0),
+      renderOptions: {
+        before: {
+          contentText: span.text,
+          backgroundColor: new vscode.ThemeColor('diffEditor.removedTextBackground'),
+        },
+      },
+    }));
     editor.setDecorations(this.addedType, added);
     editor.setDecorations(this.removedType, removed);
     this.lensChanged.fire();

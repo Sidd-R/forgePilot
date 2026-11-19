@@ -203,19 +203,32 @@ export class ReviewController implements ReviewPort {
     this.reviews.delete(key);
     const accepted = [...review.accepted];
     const rejected = review.hunks.map((h) => h.id).filter((id) => !review.accepted.has(id));
-    const proposal = this.store.getProposal(review.runId, review.proposalId);
-    if (proposal) {
-      const text = applyHunks(review.beforeText, proposal.hunks, review.accepted);
-      const rel = vscode.workspace.asRelativePath(review.uri);
-      await applyText(rootDir, rel, text, accepted.length > 0);
-    }
-    await vscode.workspace.getConfiguration('files').update('autoSave', review.prevAutoSave, true);
-    if (this.reviews.size === 0) {
-      await vscode.commands.executeCommand('setContext', 'forgePilot.reviewActive', false);
-    }
-    this.view.fire();
     const result = { accepted, rejected };
-    review.resolve(result);
+    try {
+      const proposal = this.store.getProposal(review.runId, review.proposalId);
+      if (proposal) {
+        const text = applyHunks(review.beforeText, proposal.hunks, review.accepted);
+        const rel = vscode.workspace.asRelativePath(review.uri);
+        await applyText(rootDir, rel, text, accepted.length > 0);
+      }
+      await vscode.workspace.getConfiguration('files').update('autoSave', review.prevAutoSave, true);
+      if (this.reviews.size === 0) {
+        await vscode.commands.executeCommand('setContext', 'forgePilot.reviewActive', false);
+      }
+    } finally {
+      // Always runs: the review is already out of the map, so refresh
+      // clears its colors instead of repainting them, and the turn flow
+      // never wedges on an unsettled review promise.
+      const editor = vscode.window.visibleTextEditors.find(
+        (candidate) => candidate.document.uri.toString() === review.uri.toString(),
+      );
+      if (editor) {
+        this.view.refresh(editor);
+      } else {
+        this.view.fire();
+      }
+      review.resolve(result);
+    }
     return result;
   }
 

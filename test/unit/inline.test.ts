@@ -9,7 +9,7 @@ import type { ReviewPort, ReviewResult } from '../../src/edits/review';
 import type { ProposeEditDeps } from '../../src/mcp/tools/propose_edit';
 import type { TrueForgeClient } from '../../src/trueforge/client';
 import type { DiagnosticItem } from '../../src/mcp/tools/get_diagnostics';
-import type { TurnEventCallback, WireEvent } from '../../src/trueforge/wire';
+import type { TurnEventCallback, WireAgentSpec, WireEvent } from '../../src/trueforge/wire';
 
 describe('selectNewErrors', () => {
   const err = (line: number, message: string): DiagnosticItem => ({
@@ -244,5 +244,51 @@ describe('runInlineEdit run termination', () => {
     assert.equal(answers[0].allow, true);
     assert.equal(answers[1].allow, false);
     assert.match(answers[1].reason ?? '', /one proposal per turn/);
+  });
+});
+
+describe('runInlineEdit cancellation', () => {
+  it('returns cancelled without opening any session', async () => {
+    const sessions: string[] = [];
+    const store = new ProposalStore();
+    const client = {
+      createSession: async (spec: WireAgentSpec) => {
+        sessions.push(spec.model.name);
+        return 's1';
+      },
+      streamTurn: async () => ({ status: 'done' }),
+      answerApproval: async () => undefined,
+    } as unknown as TrueForgeClient;
+    const outcome = await runInlineEdit({
+      client,
+      spec: { model: { name: 'm/one' } },
+      models: ['m/one'],
+      target: {
+        rootDir: '/r',
+        relPath: 'a.py',
+        startLine: 1,
+        endLine: 1,
+        selectedText: 'x = 1\n',
+        beforeText: '',
+        afterText: '',
+      },
+      instruction: 'double it',
+      store,
+      review: {
+        open: async () => ({ accepted: ['h1'], rejected: [] as string[] }),
+      },
+      proposeDeps: {
+        rootDir: '/r',
+        store,
+        readText: async () => 'x = 1\n',
+        writeFinal: async () => undefined,
+      },
+      readFullText: async () => 'x = 1\n',
+      diagnostics: () => [],
+      onNotice: () => undefined,
+      isCancelled: () => true,
+    });
+    assert.equal(outcome, 'cancelled');
+    assert.deepEqual(sessions, []);
   });
 });

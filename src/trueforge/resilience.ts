@@ -56,6 +56,14 @@ export function classifyFailure(status: number | undefined, message: string): Fa
   return status === undefined || status >= 500 ? 'retry' : 'next-model';
 }
 
+/** The user cancelled: retries and fallbacks must stop at once. */
+export class TurnCancelledError extends Error {
+  constructor() {
+    super('Turn cancelled.');
+    this.name = 'TurnCancelledError';
+  }
+}
+
 /** All models exhausted. Carries the last failure for display. */
 export class ExhaustedError extends Error {
   readonly lastMessage: string;
@@ -91,6 +99,8 @@ export interface ResilientTurnOptions {
   onNotice: (message: string) => void;
   onSession?: (sessionId: string) => void;
   silenceTimeoutMs?: number;
+  /** When true, attempts, sleeps, and fallbacks stop with TurnCancelledError. */
+  isCancelled?: () => boolean;
 }
 
 export interface ResilientTurnResult {
@@ -110,12 +120,20 @@ function failureOf(err: unknown): { status: number | undefined; message: string 
  * Run one turn with retry-then-fallback: retryable failures retry twice
  * per model (1s, 3s), auth/unknown-model/connection failures skip to the
  * next model immediately, and 45s of stream silence counts as a timeout.
- * Nothing here touches files: no proposal exists until a model answers.
+ * A cancelled run stops at once with TurnCancelledError: no new session,
+ * no backoff sleep, no fallback. Nothing here touches files: no proposal
+ * exists until a model answers.
  */
 export async function runTurnResilient(
   deps: TurnDeps,
   opts: ResilientTurnOptions,
 ): Promise<ResilientTurnResult> {
+  const throwIfCancelled = (): void => {
+    if (opts.isCancelled?.()) {
+      throw new TurnCancelledError();
+    }
+  };
+  throwIfCancelled();
   if (opts.models.length === 0) {
     throw new ExhaustedError('no models configured');
   }
@@ -130,6 +148,7 @@ export async function runTurnResilient(
 
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       const retryLeft = attempt < RETRY_DELAYS_MS.length;
+      throwIfCancelled();
       const controller = new AbortController();
       // A paused turn waits on the user, not the model: silence must not
       // abort it, or retries cascade while the review is still open.
@@ -172,14 +191,17 @@ export async function runTurnResilient(
         }
         lastMessage = terminal.message ?? `turn ${terminal.status}`;
         if (classifyFailure(undefined, lastMessage) === 'retry' && retryLeft) {
+          throwIfCancelled();
           await deps.sleep(RETRY_DELAYS_MS[attempt]);
           continue;
         }
       } catch (err) {
         disarm();
+        throwIfCancelled();
         const failure = failureOf(err);
         lastMessage = failure.message;
         if (classifyFailure(failure.status, failure.message) === 'retry' && retryLeft) {
+          throwIfCancelled();
           await deps.sleep(RETRY_DELAYS_MS[attempt]);
           continue;
         }

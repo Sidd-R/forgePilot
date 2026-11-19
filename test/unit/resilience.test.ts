@@ -4,6 +4,7 @@ import { HttpError } from '../../src/trueforge/client';
 import {
   ExhaustedError,
   RETRY_DELAYS_MS,
+  TurnCancelledError,
   classifyFailure,
   runTurnResilient,
   type TurnDeps,
@@ -221,5 +222,49 @@ describe('runTurnResilient', () => {
       runTurnResilient(d, { spec: SPEC, input: 'hi', models: [], onEvent: noop, onNotice: noop }),
       /no models configured/,
     );
+  });
+
+  it('stops before the first session when already cancelled', async () => {
+    const d = deps({});
+    const notices: string[] = [];
+    await assert.rejects(
+      runTurnResilient(d, {
+        spec: SPEC,
+        input: 'hi',
+        models: ['m/one', 'm/two'],
+        onEvent: noop,
+        onNotice: (m) => notices.push(m),
+        isCancelled: () => true,
+      }),
+      TurnCancelledError,
+    );
+    assert.deepEqual(d.calls.models, []);
+    assert.equal(d.calls.streams, 0);
+    assert.deepEqual(d.calls.sleeps, []);
+    assert.deepEqual(notices, []);
+  });
+
+  it('does not retry or fall back once cancelled mid-flight', async () => {
+    let streams = 0;
+    const d = deps({
+      stream: async () => {
+        streams += 1;
+        return { status: 'error', message: 'timeout' };
+      },
+    });
+    await assert.rejects(
+      runTurnResilient(d, {
+        spec: SPEC,
+        input: 'hi',
+        models: ['m/one', 'm/two'],
+        onEvent: noop,
+        onNotice: noop,
+        isCancelled: () => streams >= 1,
+      }),
+      TurnCancelledError,
+    );
+    assert.equal(d.calls.streams, 1);
+    assert.deepEqual(d.calls.models, ['m/one']);
+    assert.deepEqual(d.calls.sleeps, []);
   });
 });
