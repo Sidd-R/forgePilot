@@ -2,7 +2,6 @@ import type { TranscriptEvent } from '../types';
 import type { TrueForgeClient } from '../trueforge/client';
 import { ExhaustedError, runTurnResilient, type TurnDeps } from '../trueforge/resilience';
 import type { TurnEventCallback, WireAgentSpec } from '../trueforge/wire';
-import { approvalsOf } from '../trueforge/wire';
 import type { ProposalStore } from '../edits/proposals';
 import { createProposal, hashArgs } from '../edits/proposals';
 import type { ReviewPort } from '../edits/review';
@@ -84,7 +83,6 @@ export interface InlineDeps {
 }
 
 interface TurnMemory {
-  approvals: number;
   buffer: MessageBuffer;
 }
 
@@ -95,15 +93,25 @@ interface TurnMemory {
  * Diagnostics errors feed back for up to `fixLimit` repair turns.
  */
 export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
-  const memory: TurnMemory = { approvals: 0, buffer: new MessageBuffer() };
+  const memory: TurnMemory = { buffer: new MessageBuffer() };
   let acceptedHunks = 0;
+  let reviewsOpened = 0;
+  let lastDeny = '';
   const reviewedTurns = new Set<string>();
   const diagnosticsBefore = deps.diagnostics(deps.target.relPath);
+  // Count reviews (not approvals): denied-before-staging calls must not
+  // block the fenced fallback below.
+  const review: ReviewPort = {
+    open: (rootDir, runId, proposalId, newText) => {
+      reviewsOpened += 1;
+      return deps.review.open(rootDir, runId, proposalId, newText);
+    },
+  };
   const shared = createTurnHandler({
     client: deps.client,
     rootDir: deps.target.rootDir,
     store: deps.store,
-    review: deps.review,
+    review,
     proposeDeps: deps.proposeDeps,
     askCommand: (_command: string): Promise<CommandChoice> => Promise.resolve('deny'),
     onTranscript: deps.onTranscript,
@@ -116,11 +124,13 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
       reviewedTurns.has(turnId)
         ? 'Inline edit reviews one proposal per turn; ignoring this extra call.'
         : undefined,
+    onDenied: (reason) => {
+      lastDeny = reason;
+    },
     isCancelled: deps.isCancelled,
   });
   const onEvent: TurnEventCallback = (event, cursor, info) => {
     memory.buffer.feed(event);
-    memory.approvals += approvalsOf(event).length;
     return shared(event, cursor, info);
   };
   const turnDeps: TurnDeps = {
@@ -152,8 +162,8 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
     return 'failed';
   }
 
-  if (memory.approvals === 0) {
-    const outcome = await runFencedFallback(deps, memory, sessionId);
+  if (reviewsOpened === 0) {
+    const outcome = await runFencedFallback(deps, memory, sessionId, lastDeny);
     if (outcome !== 'applied') {
       return outcome;
     }
@@ -182,14 +192,14 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
         .map((d) => `line ${d.line}: ${d.message}`)
         .join('\n') +
       '\nFix them with propose_edit (same file, smallest change).';
-    memory.approvals = 0;
     memory.buffer = new MessageBuffer();
+    const reviewsBefore = reviewsOpened;
     try {
       const terminal = await deps.client.streamTurn(sessionId, prompt, onEvent);
       if (terminal.status === 'cancelled') {
         return 'cancelled';
       }
-      if (terminal.status !== 'done' || memory.approvals === 0) {
+      if (terminal.status !== 'done' || reviewsOpened === reviewsBefore) {
         return 'applied';
       }
     } catch (err) {
@@ -205,12 +215,17 @@ async function runFencedFallback(
   deps: InlineDeps,
   memory: TurnMemory,
   sessionId: string,
+  lastDeny: string,
 ): Promise<InlineOutcome> {
   const texts = memory.buffer.texts();
   const reply = texts[texts.length - 1] ?? '';
   const replacement = parseFencedBlock(reply);
   if (!replacement) {
-    deps.onNotice('The model returned no edit (no tool call, no code block).');
+    deps.onNotice(
+      lastDeny
+        ? `No suggestion produced: ${lastDeny.slice(0, 220)}`
+        : 'The model returned no edit (no tool call, no code block).',
+    );
     return 'failed';
   }
   const full = await deps.readFullText();
@@ -220,7 +235,8 @@ async function runFencedFallback(
   }
   const lines = full.split('\n');
   const currentSelection = lines.slice(deps.target.startLine - 1, deps.target.endLine).join('\n');
-  if (currentSelection !== deps.target.selectedText) {
+  // Ignore trailing newlines: selecting to the next line start is the same range.
+  if (currentSelection.replace(/\n+$/, '') !== deps.target.selectedText.replace(/\n+$/, '')) {
     deps.onNotice('The selection changed while the model was working; discarding the proposal.');
     return 'failed';
   }

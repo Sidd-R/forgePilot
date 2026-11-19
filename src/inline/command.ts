@@ -90,26 +90,35 @@ export async function runInlineCommand(host: Host): Promise<void> {
           void host.client.cancel(host.activeSession).catch(() => undefined);
         }
       });
-      const outcome = await runInlineEdit({
-        client: host.client,
-        spec,
-        models: [host.config.primaryModel, ...host.config.fallbackModels],
-        target,
-        instruction,
-        store: host.store,
-        review: host.review,
-        proposeDeps: host.proposeDeps,
-        readFullText: () => readText(host.rootDir, target.relPath),
-        diagnostics: (rel) => collectDiagnostics(rel),
-        onNotice: (message) => void vscode.window.showInformationMessage(`ForgePilot: ${message}`),
-        onSession: (sessionId) => {
-          host.activeSession = sessionId;
-        },
-        onReviewComplete: (runId) => {
-          host.lastRunId = runId;
-        },
-        isCancelled: () => host.cancelled,
-      });
+      let outcome: string;
+      try {
+        outcome = await runInlineEdit({
+          client: host.client,
+          spec,
+          models: [host.config.primaryModel, ...host.config.fallbackModels],
+          target,
+          instruction,
+          store: host.store,
+          review: host.review,
+          proposeDeps: host.proposeDeps,
+          readFullText: () => readText(host.rootDir, target.relPath),
+          diagnostics: (rel) => collectDiagnostics(rel),
+          onNotice: (message) => void vscode.window.showInformationMessage(`ForgePilot: ${message}`),
+          onSession: (sessionId) => {
+            host.activeSession = sessionId;
+          },
+          onReviewComplete: (runId) => {
+            host.lastRunId = runId;
+          },
+          isCancelled: () => host.cancelled,
+        });
+      } catch (err) {
+        host.activeSession = undefined;
+        void vscode.window.showErrorMessage(
+          `ForgePilot inline edit failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return;
+      }
       host.activeSession = undefined;
       if (outcome === 'applied') {
         void vscode.window.showInformationMessage('ForgePilot: edit applied.');

@@ -94,7 +94,11 @@ describe('runInlineEdit run termination', () => {
     } as unknown as TrueForgeClient;
   }
 
-  function depsFor(client: TrueForgeClient, diagnostics: (rel: string) => DiagnosticItem[]): InlineDeps {
+  function depsFor(
+    client: TrueForgeClient,
+    diagnostics: (rel: string) => DiagnosticItem[],
+    notices: string[] = [],
+  ): InlineDeps {
     return {
       client,
       spec: { model: { name: 'm/x' } },
@@ -114,7 +118,7 @@ describe('runInlineEdit run termination', () => {
       proposeDeps,
       readFullText: () => fs.promises.readFile(path.join(root, 'a.py'), 'utf8'),
       diagnostics,
-      onNotice: () => undefined,
+      onNotice: (message: string) => notices.push(message),
       isCancelled: () => false,
     };
   }
@@ -172,6 +176,54 @@ describe('runInlineEdit run termination', () => {
     const outcome = await runInlineEdit(depsFor(client, counting));
     assert.equal(outcome, 'applied');
     assert.equal(streamCalls, 2);
+  });
+
+  it('falls back to the fenced block when tool calls were denied pre-review', async () => {
+    const badArgs = { path: 'a.py', edits: [{ old_text: 'zzz-nope', new_text: 'q' }] };
+    const client = scriptedClient([
+      (fire) => {
+        const cursor = { turnId: 't1', lastEventId: 'e0' };
+        return Promise.resolve()
+          .then(() => fire(message('e1', 'call_1', badArgs), cursor, { sessionId: 's1' }))
+          .then(() => fire(approval('call_1', 'e1'), cursor, { sessionId: 's1' }))
+          .then(() =>
+            fire(
+              { type: 'model.message', id: 'e2', content: 'Here:\n```\nx = 5\n```' },
+              cursor,
+              { sessionId: 's1' },
+            ),
+          );
+      },
+    ]);
+    const outcome = await runInlineEdit(depsFor(client, () => []));
+    assert.equal(outcome, 'applied');
+    assert.equal(reviewsOpened, 1);
+    assert.equal(fs.readFileSync(path.join(root, 'a.py'), 'utf8'), 'x = 5\n');
+  });
+
+  it('explains the failure when no review and no fenced block exist', async () => {
+    const badArgs = { path: 'a.py', edits: [{ old_text: 'zzz-nope', new_text: 'q' }] };
+    const client = scriptedClient([
+      (fire) => {
+        const cursor = { turnId: 't1', lastEventId: 'e0' };
+        return Promise.resolve()
+          .then(() => fire(message('e1', 'call_1', badArgs), cursor, { sessionId: 's1' }))
+          .then(() => fire(approval('call_1', 'e1'), cursor, { sessionId: 's1' }))
+          .then(() =>
+            fire(
+              { type: 'model.message', id: 'e2', content: 'Sorry, I could not do it.' },
+              cursor,
+              { sessionId: 's1' },
+            ),
+          );
+      },
+    ]);
+    const notices: string[] = [];
+    const outcome = await runInlineEdit(depsFor(client, () => [], notices));
+    assert.equal(outcome, 'failed');
+    assert.equal(reviewsOpened, 0);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0], /old_text did not match/);
   });
 
   it('denies a second proposal in the same turn', async () => {

@@ -23,6 +23,8 @@ export interface TurnFlowDeps {
   onReviewComplete?: (runId: string, proposalId: string, accepted: number, rejected: number) => void;
   /** Return a deny reason to refuse a proposal before staging it. */
   proposalGate?: (turnId: string) => string | undefined;
+  /** Fires for system denies (match failures, unknown calls, gated calls). */
+  onDenied?: (reason: string) => void;
   isCancelled: () => boolean;
   /** Override for tests; production answers through the client. */
   answerApproval?: (
@@ -66,6 +68,7 @@ export function createTurnHandler(deps: TurnFlowDeps): TurnEventCallback {
       const source = messages.get(approval.sourceEventId);
       const call = source ? toolCallFromMessage(source, approval.toolCallId) : undefined;
       if (!call) {
+        deps.onDenied?.('Unknown tool call.');
         await answer(info.sessionId, cursor.turnId, approval, false, 'Unknown tool call.');
         continue;
       }
@@ -95,6 +98,7 @@ async function handleProposeEdit(
 ): Promise<void> {
   const gateReason = deps.proposalGate?.(turnId);
   if (gateReason) {
+    deps.onDenied?.(gateReason);
     await answer(sessionId, turnId, approval, false, gateReason);
     return;
   }
@@ -113,13 +117,9 @@ async function handleProposeEdit(
       allow ? undefined : 'User rejected every hunk.',
     );
   } catch (err) {
-    await answer(
-      sessionId,
-      turnId,
-      approval,
-      false,
-      err instanceof Error ? err.message : String(err),
-    );
+    const reason = err instanceof Error ? err.message : String(err);
+    deps.onDenied?.(reason);
+    await answer(sessionId, turnId, approval, false, reason);
   }
 }
 
