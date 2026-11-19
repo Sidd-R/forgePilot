@@ -45,7 +45,16 @@ describe('planDecorations', () => {
   it('colors only undecided hunks', () => {
     const plan = planDecorations(hunks, new Set(['h1']), starts);
     assert.deepEqual(plan.added, [{ startLine: 21, endLine: 21 }]);
-    assert.deepEqual(plan.removed, [{ line: 21, text: 'old two' }]);
+    assert.deepEqual(plan.removed, [{ line: 21, text: 'old two', count: 1 }]);
+  });
+
+  it('counts removed lines for the chip', () => {
+    const plan = planDecorations(
+      [{ id: 'h1', startLine: 5, oldLines: ['a', 'b', 'c'], newLines: ['z'] }],
+      new Set(),
+      new Map([['h1', 5]]),
+    );
+    assert.deepEqual(plan.removed, [{ line: 5, text: 'a\nb\nc', count: 3 }]);
   });
 
   it('clears every color once every hunk is decided', () => {

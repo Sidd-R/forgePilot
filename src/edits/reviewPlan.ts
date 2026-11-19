@@ -18,7 +18,7 @@ export interface PlannedLens {
 /** Diff coloring the review surface should show. */
 export interface PlannedDecorations {
   added: Array<{ startLine: number; endLine: number }>;
-  removed: Array<{ line: number; text: string }>;
+  removed: Array<{ line: number; text: string; count: number }>;
 }
 
 /** Per-hunk accept/reject buttons for every undecided hunk. */
@@ -70,7 +70,11 @@ export function planDecorations(
       added.push({ startLine: start, endLine: start + hunk.newLines.length - 1 });
     }
     if (hunk.oldLines.length > 0) {
-      removed.push({ line: start, text: hunk.oldLines.join('\n') });
+      removed.push({
+        line: start,
+        text: hunk.oldLines.join('\n'),
+        count: hunk.oldLines.length,
+      });
     }
   }
   return { added, removed };
