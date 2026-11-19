@@ -16,7 +16,6 @@ export interface OpenReview {
   rejected: Set<string>;
   decided: Set<string>;
   resolve: (result: ReviewResult) => void;
-  prevAutoSave: unknown;
 }
 
 export function appliedOf(review: OpenReview): Set<string> {

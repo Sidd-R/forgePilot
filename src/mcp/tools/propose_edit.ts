@@ -9,17 +9,48 @@ import {
 import { AlreadyAppliedError, MatchError, isAlreadyApplied } from '../../edits/matcher';
 import { resolveInside } from './jail';
 
-export const proposeEditSchema = z.object({
+const fileEditSchema = z.object({
   path: z.string().describe('Workspace-relative file path.'),
   edits: z
     .array(z.object({ old_text: z.string(), new_text: z.string() }))
     .optional()
     .describe('Search-and-replace blocks. Omit when content is used.'),
   content: z.string().optional().describe('Whole-file content for new or small files.'),
+  explanation: z.string().optional().describe('Why this file changes.'),
+});
+
+export type FileEditArgs = z.infer<typeof fileEditSchema>;
+
+export const proposeEditSchema = z.object({
+  path: z.string().optional().describe('Workspace-relative file path (single-file call).'),
+  edits: z
+    .array(z.object({ old_text: z.string(), new_text: z.string() }))
+    .optional()
+    .describe('Search-and-replace blocks. Omit when content is used.'),
+  content: z.string().optional().describe('Whole-file content for new or small files.'),
   explanation: z.string().optional().describe('Why this change is needed.'),
+  files: z
+    .array(fileEditSchema)
+    .optional()
+    .describe(
+      'Batch several files into ONE call so the user reviews everything together. ' +
+        'Prefer one call with all files over many single-file calls.',
+    ),
 });
 
 export type ProposeEditArgs = z.infer<typeof proposeEditSchema>;
+
+/** Single-file fields plus batched files, in call order. */
+export function fileListOf(args: ProposeEditArgs): FileEditArgs[] {
+  const out: FileEditArgs[] = [];
+  if (args.path !== undefined) {
+    out.push({ path: args.path, edits: args.edits, content: args.content, explanation: args.explanation });
+  }
+  for (const file of args.files ?? []) {
+    out.push(file);
+  }
+  return out;
+}
 
 export interface ProposeEditDeps {
   rootDir: string;
@@ -29,52 +60,73 @@ export interface ProposeEditDeps {
 }
 
 /** Hash input shape. prepare and apply must hash identically. */
-function hashInput(rel: string, args: ProposeEditArgs): string {
-  return hashArgs({ path: rel, edits: args.edits, content: args.content });
+function hashInput(files: Array<{ rel: string; edits?: unknown; content?: string }>): string {
+  return hashArgs(files.map((file) => ({ path: file.rel, edits: file.edits, content: file.content })));
 }
 
 /**
- * Pause-time: build the proposal from the tool-call arguments and stage
- * it for review. Throws MatchError/JailError with model-readable text;
- * the caller turns that into a deny reason so the model can retry.
+ * Pause-time: build one proposal per file and stage them for a single
+ * combined review. All-or-nothing: any failure stages nothing, and the
+ * caller turns the message into a deny reason so the model can retry.
  */
+export async function prepareProposals(
+  deps: ProposeEditDeps,
+  runId: string,
+  nextId: () => string,
+  rawArgs: Record<string, unknown>,
+): Promise<Array<{ proposal: Proposal; newText: string }>> {
+  const parsed = proposeEditSchema.parse(rawArgs);
+  const files = fileListOf(parsed);
+  if (files.length === 0) {
+    throw new Error('propose_edit needs a path or files.');
+  }
+  const jailed = files.map((file) => ({ ...file, rel: resolveInside(deps.rootDir, file.path).rel }));
+  const callHash = hashInput(jailed);
+  const built: Array<{ proposal: Proposal; newText: string; current: string | null }> = [];
+  for (const file of jailed) {
+    const current = await deps.readText(file.rel);
+    if (current !== null && file.content === undefined && !file.edits?.length) {
+      throw new Error(`propose_edit for ${file.rel} needs edits or content.`);
+    }
+    try {
+      const one = createProposal(
+        nextId(),
+        file.rel,
+        current,
+        { edits: file.edits, content: file.content, explanation: file.explanation },
+        callHash,
+      );
+      if (one.proposal.hunks.length === 0) {
+        throw new Error(
+          `propose_edit changes nothing in ${file.rel}; drop it or fix old_text.`,
+        );
+      }
+      built.push({ ...one, current });
+    } catch (err) {
+      if (err instanceof MatchError && current !== null && isAlreadyApplied(current, file.edits)) {
+        throw new AlreadyAppliedError();
+      }
+      throw err;
+    }
+  }
+  for (const one of built) {
+    deps.store.addProposal(runId, one.proposal, one.current);
+  }
+  return built;
+}
+
+/** Single-file prepare, kept for the inline fenced path and older tests. */
 export async function prepareProposal(
   deps: ProposeEditDeps,
   runId: string,
   proposalId: string,
   rawArgs: Record<string, unknown>,
 ): Promise<{ proposal: Proposal; newText: string }> {
-  const parsed = proposeEditSchema.parse(rawArgs);
-  const { rel } = resolveInside(deps.rootDir, parsed.path);
-  const current = await deps.readText(rel);
-  if (current !== null && parsed.content === undefined && !parsed.edits?.length) {
-    throw new Error('propose_edit needs edits or content.');
+  const [only] = await prepareProposals(deps, runId, () => proposalId, rawArgs);
+  if (!only) {
+    throw new Error('propose_edit needs a path or files.');
   }
-  let built;
-  try {
-    built = createProposal(
-      proposalId,
-      rel,
-      current,
-      { edits: parsed.edits, content: parsed.content, explanation: parsed.explanation },
-      hashInput(rel, parsed),
-    );
-  } catch (err) {
-    if (
-      err instanceof MatchError &&
-      current !== null &&
-      isAlreadyApplied(current, parsed.edits)
-    ) {
-      throw new AlreadyAppliedError();
-    }
-    throw err;
-  }
-  const { proposal, newText } = built;
-  if (proposal.hunks.length === 0) {
-    throw new Error('propose_edit changes nothing; the file already has this content.');
-  }
-  deps.store.addProposal(runId, proposal, current);
-  return { proposal, newText };
+  return only;
 }
 
 export interface ApplyOutcome {
@@ -93,14 +145,39 @@ export async function applyPreparedProposal(
   rawArgs: Record<string, unknown>,
 ): Promise<ApplyOutcome> {
   const parsed = proposeEditSchema.parse(rawArgs);
-  const { rel } = resolveInside(deps.rootDir, parsed.path);
-  const found = deps.store.findByHash(hashInput(rel, parsed));
-  if (!found) {
+  const files = fileListOf(parsed);
+  if (files.length === 0) {
+    throw new Error('propose_edit needs a path or files.');
+  }
+  const jailed = files.map((file) => ({
+    edits: file.edits,
+    content: file.content,
+    rel: resolveInside(deps.rootDir, file.path).rel,
+  }));
+  const found = deps.store.findAllByHash(hashInput(jailed));
+  if (found.length === 0) {
     throw new Error(
       'No recorded user decision for this edit; it was never reviewed. Rejecting.',
     );
   }
-  return applyDecidedProposal(deps, found.runId, found.proposal.id);
+  const applied: string[] = [];
+  const rejected: string[] = [];
+  const multi = found.length > 1;
+  for (const match of found) {
+    const outcome = await applyDecidedProposal(deps, match.runId, match.proposal.id);
+    const tag = (id: string): string =>
+      multi ? `${match.proposal.path}:${id}` : id;
+    applied.push(...outcome.applied.map(tag));
+    rejected.push(...outcome.rejected.map(tag));
+  }
+  return {
+    applied,
+    rejected,
+    note:
+      rejected.length > 0
+        ? `User rejected hunks ${rejected.join(', ')}; do not resend them unchanged.`
+        : undefined,
+  };
 }
 
 /**
@@ -142,7 +219,8 @@ export function makeProposeEdit(deps: ProposeEditDeps): McpToolDef {
   return {
     name: 'propose_edit',
     description:
-      'Propose a file edit for user review. One file per call; smallest edit that works.',
+      'Propose file edits for user review. Batch every file the task needs into ONE call ' +
+      'with files[] so the user reviews everything together; smallest edit that works per file.',
     inputSchema: proposeEditSchema.shape,
     annotations: { readOnlyHint: false },
     handler: async (args) => {

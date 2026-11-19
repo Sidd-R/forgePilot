@@ -118,16 +118,17 @@ export class ProposalStore {
     }
   }
 
-  /** Find a staged proposal by its call hash (tool calls carry no run id). */
-  findByHash(callHash: string): { runId: string; proposal: Proposal } | undefined {
+  /** Staged proposals sharing one call hash (tool calls carry no run id). */
+  findAllByHash(callHash: string): Array<{ runId: string; proposal: Proposal }> {
+    const out: Array<{ runId: string; proposal: Proposal }> = [];
     for (const [runId, state] of this.runs) {
       for (const proposal of state.proposals.values()) {
         if (proposal.callHash === callHash) {
-          return { runId, proposal };
+          out.push({ runId, proposal });
         }
       }
     }
-    return undefined;
+    return out;
   }
 
   /** Final text for a fully-decided proposal, or throws. */

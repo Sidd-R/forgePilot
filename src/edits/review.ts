@@ -14,9 +14,27 @@ export type { ReviewResult, ReviewPort };
 export class ReviewController implements ReviewPort {
   private reviews = new Map<string, OpenReview>();
   readonly view: ReviewView;
+  private autoSaveDepth = 0;
+  private autoSavePrev: unknown;
 
   constructor(private readonly store: ProposalStore) {
     this.view = new ReviewView(() => [...this.reviews.values()]);
+  }
+
+  /** Suppress auto-save while any review is open (refcounted for batches). */
+  private async suppressAutoSave(): Promise<void> {
+    if (this.autoSaveDepth === 0) {
+      this.autoSavePrev = vscode.workspace.getConfiguration('files').get('autoSave');
+      await vscode.workspace.getConfiguration('files').update('autoSave', 'off', true);
+    }
+    this.autoSaveDepth += 1;
+  }
+
+  private async restoreAutoSave(): Promise<void> {
+    this.autoSaveDepth = Math.max(0, this.autoSaveDepth - 1);
+    if (this.autoSaveDepth === 0) {
+      await vscode.workspace.getConfiguration('files').update('autoSave', this.autoSavePrev, true);
+    }
   }
 
   /** Open review for a proposal staged by prepareProposal. */
@@ -42,8 +60,7 @@ export class ReviewController implements ReviewPort {
     const uri = vscode.Uri.joinPath(vscode.Uri.file(rootDir), proposal.path);
     const editor = await vscode.window.showTextDocument(uri);
     const key = this.key(runId, proposalId);
-    const prevAutoSave = vscode.workspace.getConfiguration('files').get('autoSave');
-    await vscode.workspace.getConfiguration('files').update('autoSave', 'off', true);
+    await this.suppressAutoSave();
 
     return new Promise<ReviewResult>((resolve) => {
       const review: OpenReview = {
@@ -56,7 +73,6 @@ export class ReviewController implements ReviewPort {
         rejected: new Set(),
         decided: new Set(),
         resolve,
-        prevAutoSave,
       };
       this.reviews.set(key, review);
       void vscode.commands.executeCommand('setContext', 'forgePilot.reviewActive', true);
@@ -209,7 +225,7 @@ export class ReviewController implements ReviewPort {
       const rel = vscode.workspace.asRelativePath(review.uri);
       await applyText(rootDir, rel, text, accepted.length > 0);
     }
-    await vscode.workspace.getConfiguration('files').update('autoSave', review.prevAutoSave, true);
+    await this.restoreAutoSave();
     if (this.reviews.size === 0) {
       await vscode.commands.executeCommand('setContext', 'forgePilot.reviewActive', false);
     }
