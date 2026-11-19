@@ -226,6 +226,32 @@ describe('runInlineEdit run termination', () => {
     assert.match(notices[0], /old_text did not match/);
   });
 
+  it('reports already-applied edits instead of failing silently', async () => {
+    fs.writeFileSync(path.join(root, 'a.py'), 'x = 2\n');
+    const staleArgs = { path: 'a.py', edits: [{ old_text: 'x = 1', new_text: 'x = 2' }] };
+    const client = scriptedClient([
+      (fire) => {
+        const cursor = { turnId: 't1', lastEventId: 'e0' };
+        return Promise.resolve()
+          .then(() => fire(message('e1', 'call_1', staleArgs), cursor, { sessionId: 's1' }))
+          .then(() => fire(approval('call_1', 'e1'), cursor, { sessionId: 's1' }))
+          .then(() =>
+            fire(
+              { type: 'model.message', id: 'e2', content: 'Looks done already.' },
+              cursor,
+              { sessionId: 's1' },
+            ),
+          );
+      },
+    ]);
+    const notices: string[] = [];
+    const outcome = await runInlineEdit(depsFor(client, () => [], notices));
+    assert.equal(outcome, 'failed');
+    assert.equal(reviewsOpened, 0);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0], /already contains/);
+  });
+
   it('denies a second proposal in the same turn', async () => {
     const client = scriptedClient([
       (fire) => {

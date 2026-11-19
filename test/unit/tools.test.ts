@@ -16,8 +16,10 @@ import {
   applyPreparedProposal,
   makeProposeEdit,
   prepareProposal,
+  prepareProposals,
   type ProposeEditDeps,
 } from '../../src/mcp/tools/propose_edit';
+import { AlreadyAppliedError } from '../../src/edits/matcher';
 import { ProposalStore } from '../../src/edits/proposals';
 import { CodeIndex } from '../../src/context/index';
 import type { TextResult } from '../../src/mcp/server';
@@ -193,6 +195,24 @@ describe('propose_edit', () => {
     assert.equal(fs.readFileSync(path.join(root, file), 'utf8'), 'a = 10\nb = 2\n');
   });
 
+  it('reports already-applied edits distinctly from mismatches', async () => {
+    const d = deps();
+    await assert.rejects(
+      prepareProposal(d, 'run1', 'p1', {
+        path: 'src/app.py',
+        edits: [{ old_text: 'zzz-nope', new_text: 'def main():' }],
+      }),
+      AlreadyAppliedError,
+    );
+    await assert.rejects(
+      prepareProposal(d, 'run1', 'p2', {
+        path: 'src/app.py',
+        edits: [{ old_text: 'zzz-nope', new_text: 'zzz-fresh' }],
+      }),
+      /did not match/,
+    );
+  });
+
   it('refuses tool calls with no recorded review', async () => {
     const d = deps();
     await assert.rejects(
@@ -210,6 +230,48 @@ describe('propose_edit', () => {
     d.store.decide('run1', 'p1', 'h1', 'accepted');
     fs.writeFileSync(path.join(root, file), 'v = 99\n');
     await assert.rejects(applyPreparedProposal(d, args), /changed since review/);
+  });
+
+  it('stages and applies batched multi-file calls', async () => {
+    fs.writeFileSync(path.join(root, 'src', 'one.py'), 'a = 1\n');
+    fs.writeFileSync(path.join(root, 'src', 'two.py'), 'b = 2\n');
+    const d = deps();
+    const args = {
+      files: [
+        { path: 'src/one.py', edits: [{ old_text: 'a = 1', new_text: 'a = 10' }] },
+        { path: 'src/two.py', edits: [{ old_text: 'b = 2', new_text: 'b = 20' }] },
+      ],
+    };
+    let counter = 0;
+    const staged = await prepareProposals(d, 'run1', () => `p${++counter}`, args);
+    assert.equal(staged.length, 2);
+    assert.equal(staged[0].proposal.path, 'src/one.py');
+    assert.equal(staged[1].proposal.path, 'src/two.py');
+    d.store.decide('run1', 'p1', 'h1', 'accepted');
+    d.store.decide('run1', 'p2', 'h1', 'rejected');
+    const outcome = await applyPreparedProposal(d, args);
+    assert.deepEqual(outcome.applied, ['src/one.py:h1']);
+    assert.deepEqual(outcome.rejected, ['src/two.py:h1']);
+    assert.equal(fs.readFileSync(path.join(root, 'src', 'one.py'), 'utf8'), 'a = 10\n');
+    assert.equal(fs.readFileSync(path.join(root, 'src', 'two.py'), 'utf8'), 'b = 2\n');
+  });
+
+  it('stages nothing when any batched file fails', async () => {
+    fs.writeFileSync(path.join(root, 'src', 'ok.py'), 'a = 1\n');
+    fs.writeFileSync(path.join(root, 'src', 'bad.py'), 'b = 2\n');
+    const d = deps();
+    let counter = 0;
+    await assert.rejects(
+      prepareProposals(d, 'run1', () => `p${++counter}`, {
+        files: [
+          { path: 'src/ok.py', edits: [{ old_text: 'a = 1', new_text: 'a = 10' }] },
+          { path: 'src/bad.py', edits: [{ old_text: 'zzz-nope', new_text: 'x' }] },
+        ],
+      }),
+      /did not match/,
+    );
+    assert.equal(d.store.findAllByHash('whatever').length, 0);
+    assert.equal(d.store.getProposal('run1', 'p1'), undefined);
   });
 
   it('exposes the flow as an MCP tool', async () => {

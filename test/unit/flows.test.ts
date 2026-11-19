@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { buildInlineInput } from '../../src/inline/controller';
+import { createTurnHandler } from '../../src/flows/turns';
+import { ProposalStore } from '../../src/edits/proposals';
+import { applyPreparedProposal } from '../../src/mcp/tools/propose_edit';
 import {
   MessageBuffer,
   mergeDelta,
@@ -98,6 +104,93 @@ describe('mergeDelta and MessageBuffer', () => {
     buffer.feed({ type: 'model.message', id: 'm2' });
     buffer.feed({ type: 'model.message.delta', id: 'm2', content: 'second' });
     assert.deepEqual(buffer.texts(), ['first', 'second']);
+  });
+});
+
+describe('batched review orchestration', () => {
+  it('opens every file and answers once', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fpbatch-'));
+    fs.writeFileSync(path.join(root, 'a.py'), 'a = 1\n');
+    fs.writeFileSync(path.join(root, 'b.py'), 'b = 2\n');
+    const store = new ProposalStore();
+    const opened: string[] = [];
+    const answers: boolean[] = [];
+    const handler = createTurnHandler({
+      client: {
+        answerApproval: (_s: string, _t: string, _a: never, allow: boolean) => {
+          answers.push(allow);
+          return Promise.resolve();
+        },
+      } as never,
+      rootDir: root,
+      store,
+      review: {
+        open: (_root: string, runId: string, proposalId: string) => {
+          opened.push(proposalId);
+          const proposal = store.getProposal(runId, proposalId);
+          assert.ok(proposal);
+          for (const hunk of proposal.hunks) {
+            store.decide(runId, proposalId, hunk.id, 'accepted');
+          }
+          return Promise.resolve({
+            accepted: proposal.hunks.map((h) => h.id),
+            rejected: [],
+          });
+        },
+      },
+      proposeDeps: {
+        rootDir: root,
+        store,
+        readText: (rel: string) =>
+          fs.promises.readFile(path.join(root, rel), 'utf8').catch((): null => null),
+        writeFinal: (rel: string, text: string) => fs.promises.writeFile(path.join(root, rel), text),
+      },
+      askCommand: () => Promise.resolve('deny' as const),
+      isCancelled: () => false,
+    });
+    const args = {
+      files: [
+        { path: 'a.py', edits: [{ old_text: 'a = 1', new_text: 'a = 10' }] },
+        { path: 'b.py', edits: [{ old_text: 'b = 2', new_text: 'b = 20' }] },
+      ],
+    };
+    const cursor = { turnId: 't1', lastEventId: 'e0' };
+    await handler(
+      {
+        type: 'model.message',
+        id: 'e1',
+        tool_calls: [
+          { id: 'call_1', function: { name: 'propose_edit', arguments: JSON.stringify(args) } },
+        ],
+      },
+      cursor,
+      { sessionId: 's1' },
+    );
+    await handler(
+      {
+        type: 'tool.approval_required',
+        id: 'p1',
+        thread_id: 'main',
+        tool_calls: [{ id: 'call_1', source_event_id: 'e1' }],
+      },
+      cursor,
+      { sessionId: 's1' },
+    );
+    assert.deepEqual(opened.length, 2);
+    assert.deepEqual(answers, [true]);
+    const outcome = await applyPreparedProposal(
+      {
+        rootDir: root,
+        store,
+        readText: (rel: string) =>
+          fs.promises.readFile(path.join(root, rel), 'utf8').catch((): null => null),
+        writeFinal: (rel: string, text: string) => fs.promises.writeFile(path.join(root, rel), text),
+      },
+      args,
+    );
+    assert.equal(outcome.applied.length, 2);
+    assert.equal(fs.readFileSync(path.join(root, 'a.py'), 'utf8'), 'a = 10\n');
+    assert.equal(fs.readFileSync(path.join(root, 'b.py'), 'utf8'), 'b = 20\n');
   });
 });
 

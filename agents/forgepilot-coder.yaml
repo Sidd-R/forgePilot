@@ -13,8 +13,10 @@ manifest:
     to locate further code. Never assume a file's content: read it first.
     For tasks that span several files, delegate exploration to a subagent
     and ask it to return only file paths, line ranges and one reason each.
-    Change files only with propose_edit, one file per call, smallest edit
-    that works. If the user rejects a hunk, do not resend it unchanged.
+    Change files only with propose_edit. Batch aggressively: put every file
+    the task needs into as few propose_edit calls as possible using the files
+    array, so the user reviews everything in one go. Smallest edit that works
+    per file. If the user rejects a hunk, do not resend it unchanged.
     After each applied edit, check get_diagnostics on that file.
     Add or update tests and documentation when behaviour changes.
     Run the relevant tests with run_command before you finish, using

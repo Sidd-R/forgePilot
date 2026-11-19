@@ -9,10 +9,12 @@ import { PanelHost } from './panel/host';
 let hostPromise: Promise<Host> | undefined;
 let extensionUri: vscode.Uri | undefined;
 let listenersRegistered = false;
+let panelHost: PanelHost | undefined;
 
 function resetForTests(): void {
   hostPromise = undefined;
   listenersRegistered = false;
+  panelHost = undefined;
 }
 
 /**
@@ -54,6 +56,11 @@ function registerListeners(context: vscode.ExtensionContext, host: Host): void {
   listenersRegistered = true;
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider({ scheme: 'file' }, host.review.view),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor) {
+        host.review.view.refresh(editor);
+      }
+    }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
       const found = host.review.reviewForUri(doc.uri);
       if (found) {
@@ -130,7 +137,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const panelProvider = {
     resolveWebviewView: (view: vscode.WebviewView): void => {
       void withHost(context, async (host) => {
-        new PanelHost(
+        // One PanelHost for the extension lifetime: a fresh instance per
+        // resolve would drop the unfinalized live chat and context card.
+        panelHost ??= new PanelHost(
           host,
           {
             cancel: () => cancelActive(context),
@@ -144,12 +153,15 @@ export function activate(context: vscode.ExtensionContext): void {
               void context.globalState.update('forgePilot.chats', records);
             },
           },
-        ).resolveWebviewView(view);
+        );
+        panelHost.resolveWebviewView(view);
       });
     },
   };
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('forgePilot.panel', panelProvider),
+    vscode.window.registerWebviewViewProvider('forgePilot.panel', panelProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
     vscode.commands.registerCommand('forgePilot.inlineEdit', () => inlineEdit(context)),
     vscode.commands.registerCommand('forgePilot.openAgent', () => {
       void vscode.commands.executeCommand('forgePilot.panel.focus');

@@ -8,6 +8,25 @@ export class MatchError extends Error {
   }
 }
 
+/** The file already holds the post-edit state; retrying is pointless. */
+export class AlreadyAppliedError extends Error {
+  constructor() {
+    super(
+      'No changes needed: the file already contains this exact edit. ' +
+        'Reply with prose only, no tool call and no code block.',
+    );
+    this.name = 'AlreadyAppliedError';
+  }
+}
+
+/** True when every edit's replacement is already present verbatim. */
+export function isAlreadyApplied(fullText: string, edits: TextEdit[] | undefined): boolean {
+  if (!edits || edits.length === 0) {
+    return false;
+  }
+  return edits.every((edit) => edit.new_text !== '' && fullText.includes(edit.new_text));
+}
+
 export interface TextMatch {
   index: number;
   length: number;

@@ -55,6 +55,11 @@ export class ChatHistory {
     }
   }
 
+  /** Raw events of the live (unfinalized) chat, for view rehydration. */
+  liveEvents(): TranscriptEvent[] {
+    return this.current ? [...this.current.events] : [];
+  }
+
   /** Archive the live record and start fresh on the next prompt. */
   finalize(): void {
     if (this.current && this.current.events.length > 0) {

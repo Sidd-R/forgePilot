@@ -5,7 +5,7 @@ import { approvalsOf } from '../trueforge/wire';
 import type { ProposalStore } from '../edits/proposals';
 import type { ReviewPort } from '../edits/review';
 import {
-  prepareProposal,
+  prepareProposals,
   type ProposeEditDeps,
 } from '../mcp/tools/propose_edit';
 import { MessageBuffer, messageText, toolCallFromMessage } from './messages';
@@ -103,18 +103,32 @@ async function handleProposeEdit(
     return;
   }
   try {
-    const proposalId = nextId();
-    const { newText } = await prepareProposal(deps.proposeDeps, turnId, proposalId, args);
-    deps.onTranscript?.({ kind: 'approval', text: `reviewing ${String(args['path'] ?? '')}` });
-    const result = await deps.review.open(deps.rootDir, turnId, proposalId, newText);
-    deps.onReviewComplete?.(turnId, proposalId, result.accepted.length, result.rejected.length);
-    const allow = result.accepted.length > 0;
+    const staged = await prepareProposals(deps.proposeDeps, turnId, nextId, args);
+    const paths = staged.map((entry) => entry.proposal.path).join(', ');
+    deps.onTranscript?.({ kind: 'approval', text: `reviewing ${paths}` });
+    // One combined review: every file opens, the single approval answers
+    // once the user has decided everywhere.
+    const results = await Promise.all(
+      staged.map((entry) => {
+        const started = deps.review.open(deps.rootDir, turnId, entry.proposal.id, entry.newText);
+        return started.then((result) => {
+          deps.onReviewComplete?.(
+            turnId,
+            entry.proposal.id,
+            result.accepted.length,
+            result.rejected.length,
+          );
+          return result;
+        });
+      }),
+    );
+    const accepted = results.reduce((sum, result) => sum + result.accepted.length, 0);
     await answer(
       sessionId,
       turnId,
       approval,
-      allow,
-      allow ? undefined : 'User rejected every hunk.',
+      accepted > 0,
+      accepted > 0 ? undefined : 'User rejected every hunk.',
     );
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
