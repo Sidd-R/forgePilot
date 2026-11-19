@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { TranscriptEvent } from '../types';
+import type { ContextPack, TranscriptEvent } from '../types';
 import { loadAgentFile } from '../trueforge/agents';
 import { buildPack } from '../context/pack';
 import { resolveFileMention, resolveSymbolMention } from '../context/mentions';
@@ -41,6 +41,7 @@ export class PanelHost implements vscode.WebviewViewProvider {
   private queue: TranscriptEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | undefined;
   private readonly history: ChatHistory;
+  private lastPack: ContextPack | undefined;
 
   constructor(
     private readonly host: Host,
@@ -53,11 +54,20 @@ export class PanelHost implements vscode.WebviewViewProvider {
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
-    view.webview.options = { enableScripts: true };
+    view.webview.options = { enableScripts: true, retainContextWhenHidden: true };
     view.webview.html = panelHtml(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage((message: PanelInbound) => {
       void this.onMessage(message);
     });
+    // Rehydrate after reloads or disposal: retained views never reach here.
+    if (this.lastPack) {
+      this.post('contextCard', { pack: this.lastPack });
+    }
+    const live = this.history.liveEvents();
+    if (live.length > 0) {
+      this.post('transcriptBatch', { events: live });
+    }
+    this.post('runState', { running: this.running });
   }
 
   reveal(): void {
@@ -107,6 +117,7 @@ export class PanelHost implements vscode.WebviewViewProvider {
       case 'newChat':
         this.history.finalize();
         this.sessionId = undefined;
+        this.lastPack = undefined;
         this.post('cleared');
         break;
       case 'historyList':
@@ -148,6 +159,7 @@ export class PanelHost implements vscode.WebviewViewProvider {
       mentionedFiles: files,
       mentionedSymbols: symbols,
     });
+    this.lastPack = pack;
     this.post('contextCard', { pack });
     this.flushTimer = setInterval(() => this.flush(), 50);
     try {

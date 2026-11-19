@@ -51,6 +51,20 @@ describe('ChatHistory', () => {
     assert.equal(list[0].title, 'chat 24');
   });
 
+  it('exposes live events before finalize', () => {
+    const storage = memoryStore();
+    const history = new ChatHistory(storage);
+    assert.deepEqual(history.liveEvents(), []);
+    history.beginPrompt('live');
+    history.append([event('a')]);
+    assert.deepEqual(
+      history.liveEvents().map((e) => e.text),
+      ['a'],
+    );
+    history.finalize();
+    assert.deepEqual(history.liveEvents(), []);
+  });
+
   it('caps events per chat', () => {
     const storage = memoryStore();
     const history = new ChatHistory(storage);
