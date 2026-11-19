@@ -9,10 +9,12 @@ import { PanelHost } from './panel/host';
 let hostPromise: Promise<Host> | undefined;
 let extensionUri: vscode.Uri | undefined;
 let listenersRegistered = false;
+let panelHost: PanelHost | undefined;
 
 function resetForTests(): void {
   hostPromise = undefined;
   listenersRegistered = false;
+  panelHost = undefined;
 }
 
 /**
@@ -135,7 +137,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const panelProvider = {
     resolveWebviewView: (view: vscode.WebviewView): void => {
       void withHost(context, async (host) => {
-        new PanelHost(
+        // One PanelHost for the extension lifetime: a fresh instance per
+        // resolve would drop the unfinalized live chat and context card.
+        panelHost ??= new PanelHost(
           host,
           {
             cancel: () => cancelActive(context),
@@ -149,7 +153,8 @@ export function activate(context: vscode.ExtensionContext): void {
               void context.globalState.update('forgePilot.chats', records);
             },
           },
-        ).resolveWebviewView(view);
+        );
+        panelHost.resolveWebviewView(view);
       });
     },
   };
