@@ -177,6 +177,44 @@ describe('runTurnResilient', () => {
     assert.equal(d.calls.streams, 3);
   });
 
+  it('never aborts for silence while the turn is paused', async () => {
+    const d = deps({});
+    const waiting: TurnDeps = {
+      ...d,
+      streamTurn: async (_sid, _input, onEvent, opts) => {
+        d.calls.streams += 1;
+        const cursor = { turnId: 't1', lastEventId: 'e0' };
+        await onEvent(
+          { type: 'tool.approval_required', id: 'p1', thread_id: 'main', tool_calls: [] },
+          cursor,
+          { sessionId: 's1' },
+        );
+        // Quiet well past the silence window while paused.
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        if (opts?.signal?.aborted) {
+          throw new Error('aborted while paused');
+        }
+        await onEvent(
+          { type: 'turn.done', id: 'd1', state: { status: 'done' } },
+          cursor,
+          { sessionId: 's1' },
+        );
+        return { status: 'done' };
+      },
+    };
+    const result = await runTurnResilient(waiting, {
+      spec: SPEC,
+      input: 'hi',
+      models: ['m/one'],
+      onEvent: noop,
+      onNotice: noop,
+      silenceTimeoutMs: 20,
+    });
+    assert.equal(result.terminal.status, 'done');
+    assert.equal(d.calls.streams, 1);
+    assert.deepEqual(d.calls.sleeps, []);
+  });
+
   it('rejects empty model lists', async () => {
     const d = deps({});
     await assert.rejects(

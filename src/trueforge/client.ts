@@ -30,6 +30,10 @@ export interface StreamOptions {
   signal?: AbortSignal;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Thin wrapper over TrueForge sessions, streamed turns, approval answers,
  * and cancellation. Retry/fallback policy lives in resilience.ts.
@@ -140,12 +144,19 @@ export class TrueForgeClient {
       opts?.signal,
     );
     let resubscribed = 0;
+    let pausedWaits = 0;
+    let lastStatus: string | undefined;
 
     for (;;) {
       for await (const event of readSse(res)) {
         cursor.lastEventId = event.id;
         if (event.type === 'turn.created' && event.turn_id) {
           cursor.turnId = event.turn_id;
+        }
+        if (event.type === 'tool.approval_required') {
+          lastStatus = 'paused';
+        } else if (event.type === 'turn.update' && event.state) {
+          lastStatus = event.state.status;
         }
         await onEvent(event, cursor, { sessionId });
         if (event.type === 'turn.done' && event.state) {
@@ -158,11 +169,17 @@ export class TrueForgeClient {
       if (opts?.signal?.aborted) {
         throw new Error('Turn stream aborted.');
       }
-      // Stream ended without turn.done: the turn is paused or the
-      // connection dropped. Resubscribe a bounded number of times.
-      resubscribed += 1;
-      if (!cursor.turnId || resubscribed > 5) {
-        throw new Error('Turn stream ended before turn.done arrived.');
+      // A paused turn waits on the user review, which has no time bound:
+      // keep resubscribing patiently instead of failing into a retry.
+      if (lastStatus === 'paused' && pausedWaits < 900) {
+        pausedWaits += 1;
+        await sleep(2000);
+      } else {
+        // Dropped connection: resubscribe a bounded number of times.
+        resubscribed += 1;
+        if (!cursor.turnId || resubscribed > 5) {
+          throw new Error('Turn stream ended before turn.done arrived.');
+        }
       }
       res = await this.request(
         'GET',

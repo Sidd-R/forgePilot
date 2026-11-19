@@ -119,7 +119,9 @@ export async function runTurnResilient(
   if (opts.models.length === 0) {
     throw new ExhaustedError('no models configured');
   }
-  const silenceMs = opts.silenceTimeoutMs ?? 45_000;
+  // Long enough for slow reasoning starts; Task C failures (401, refused
+  // connections) classify immediately and never wait on this window.
+  const silenceMs = opts.silenceTimeoutMs ?? 120_000;
   let lastMessage = '';
 
   for (let mi = 0; mi < opts.models.length; mi++) {
@@ -129,10 +131,23 @@ export async function runTurnResilient(
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       const retryLeft = attempt < RETRY_DELAYS_MS.length;
       const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(new Error('stream silence timeout')),
-        silenceMs,
-      );
+      // A paused turn waits on the user, not the model: silence must not
+      // abort it, or retries cascade while the review is still open.
+      let paused = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const disarm = (): void => {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+      };
+      const arm = (): void => {
+        disarm();
+        if (!paused) {
+          timer = setTimeout(() => controller.abort(new Error('stream silence timeout')), silenceMs);
+        }
+      };
+      arm();
       try {
         // Fresh session per attempt: cheap, and never inherits a poisoned one.
         const sessionId = await deps.createSession(spec);
@@ -141,12 +156,17 @@ export async function runTurnResilient(
           sessionId,
           opts.input,
           (event, cursor, info) => {
-            timer.refresh();
+            if (event.type === 'tool.approval_required') {
+              paused = true;
+            } else if (event.type !== 'turn.update' || event.state?.status !== 'paused') {
+              paused = false;
+            }
+            arm();
             return opts.onEvent(event, cursor, info);
           },
           { signal: controller.signal },
         );
-        clearTimeout(timer);
+        disarm();
         if (terminal.status === 'done' || terminal.status === 'cancelled') {
           return { terminal, model, sessionId };
         }
@@ -156,7 +176,7 @@ export async function runTurnResilient(
           continue;
         }
       } catch (err) {
-        clearTimeout(timer);
+        disarm();
         const failure = failureOf(err);
         lastMessage = failure.message;
         if (classifyFailure(failure.status, failure.message) === 'retry' && retryLeft) {
