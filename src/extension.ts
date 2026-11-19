@@ -54,6 +54,11 @@ function registerListeners(context: vscode.ExtensionContext, host: Host): void {
   listenersRegistered = true;
   context.subscriptions.push(
     vscode.languages.registerCodeLensProvider({ scheme: 'file' }, host.review.view),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor) {
+        host.review.view.refresh(editor);
+      }
+    }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
       const found = host.review.reviewForUri(doc.uri);
       if (found) {

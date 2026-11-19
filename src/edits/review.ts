@@ -58,7 +58,8 @@ export class ReviewController implements ReviewPort {
     }
     await applyText(rootDir, proposal.path, newText, false);
     const uri = vscode.Uri.joinPath(vscode.Uri.file(rootDir), proposal.path);
-    const editor = await vscode.window.showTextDocument(uri);
+    // Pinned tab: batch reviews must not replace each other in preview mode.
+    const editor = await vscode.window.showTextDocument(uri, { preview: false });
     const key = this.key(runId, proposalId);
     await this.suppressAutoSave();
 
@@ -217,6 +218,11 @@ export class ReviewController implements ReviewPort {
   private async finish(rootDir: string, review: OpenReview): Promise<ReviewResult> {
     const key = this.key(review.runId, review.proposalId);
     this.reviews.delete(key);
+    for (const editor of vscode.window.visibleTextEditors) {
+      if (editor.document.uri.toString() === review.uri.toString()) {
+        this.view.refresh(editor);
+      }
+    }
     const accepted = [...review.accepted];
     const rejected = review.hunks.map((h) => h.id).filter((id) => !review.accepted.has(id));
     const proposal = this.store.getProposal(review.runId, review.proposalId);
