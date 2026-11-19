@@ -141,11 +141,16 @@ export class ReviewView implements vscode.CodeLensProvider {
         added.push(new vscode.Range(start, 0, start + hunk.newLines.length - 1, 1_000_000));
       }
       if (hunk.oldLines.length > 0) {
+        // `before` content renders inline, so multi-line removed text
+        // would collapse onto the added line. Show a one-line chip and
+        // keep the full text in the hover, which renders markdown.
+        const count = hunk.oldLines.length;
         removed.push({
           range: new vscode.Range(start, 0, start, 0),
+          hoverMessage: `Removed:\n\`\`\`\n${hunk.oldLines.join('\n')}\n\`\`\``,
           renderOptions: {
             before: {
-              contentText: hunk.oldLines.join('\n'),
+              contentText: `− ${count} line${count === 1 ? '' : 's'} removed `,
               backgroundColor: new vscode.ThemeColor('diffEditor.removedTextBackground'),
             },
           },
