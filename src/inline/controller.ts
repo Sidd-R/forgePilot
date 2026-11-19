@@ -50,6 +50,19 @@ export function buildInlineInput(target: InlineTarget, instruction: string): str
 
 export type InlineOutcome = 'applied' | 'rejected' | 'cancelled' | 'failed';
 
+function errorKey(error: DiagnosticItem): string {
+  return `${error.line}:${error.message}`;
+}
+
+/** Errors present now that were not present before the edit. */
+export function selectNewErrors(
+  before: DiagnosticItem[],
+  after: DiagnosticItem[],
+): DiagnosticItem[] {
+  const known = new Set(before.filter((d) => d.severity === 'error').map(errorKey));
+  return after.filter((d) => d.severity === 'error' && !known.has(errorKey(d)));
+}
+
 export interface InlineDeps {
   client: TrueForgeClient;
   spec: WireAgentSpec;
@@ -84,6 +97,8 @@ interface TurnMemory {
 export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
   const memory: TurnMemory = { approvals: 0, buffer: new MessageBuffer() };
   let acceptedHunks = 0;
+  const reviewedTurns = new Set<string>();
+  const diagnosticsBefore = deps.diagnostics(deps.target.relPath);
   const shared = createTurnHandler({
     client: deps.client,
     rootDir: deps.target.rootDir,
@@ -94,8 +109,13 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
     onTranscript: deps.onTranscript,
     onReviewComplete: (runId, proposalId, accepted) => {
       acceptedHunks += accepted;
+      reviewedTurns.add(runId);
       deps.onReviewComplete?.(runId, proposalId);
     },
+    proposalGate: (turnId) =>
+      reviewedTurns.has(turnId)
+        ? 'Inline edit reviews one proposal per turn; ignoring this extra call.'
+        : undefined,
     isCancelled: deps.isCancelled,
   });
   const onEvent: TurnEventCallback = (event, cursor, info) => {
@@ -141,13 +161,17 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
     return 'rejected';
   }
 
-  // Diagnostics-driven repair, same session, bounded.
+  // Diagnostics-driven repair for errors this run introduced, same
+  // session, bounded. Pre-existing errors never trigger another round.
   const fixLimit = deps.fixLimit ?? 2;
   for (let fix = 0; fix < fixLimit; fix++) {
     if (deps.isCancelled()) {
       return 'cancelled';
     }
-    const errors = deps.diagnostics(deps.target.relPath).filter((d) => d.severity === 'error');
+    const errors = selectNewErrors(
+      diagnosticsBefore,
+      deps.diagnostics(deps.target.relPath),
+    );
     if (errors.length === 0) {
       return 'applied';
     }

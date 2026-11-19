@@ -21,6 +21,8 @@ export interface TurnFlowDeps {
   askCommand: (command: string) => Promise<CommandChoice>;
   onTranscript?: (event: TranscriptEvent) => void;
   onReviewComplete?: (runId: string, proposalId: string, accepted: number, rejected: number) => void;
+  /** Return a deny reason to refuse a proposal before staging it. */
+  proposalGate?: (turnId: string) => string | undefined;
   isCancelled: () => boolean;
   /** Override for tests; production answers through the client. */
   answerApproval?: (
@@ -91,6 +93,11 @@ async function handleProposeEdit(
   args: Record<string, unknown>,
   nextId: () => string,
 ): Promise<void> {
+  const gateReason = deps.proposalGate?.(turnId);
+  if (gateReason) {
+    await answer(sessionId, turnId, approval, false, gateReason);
+    return;
+  }
   try {
     const proposalId = nextId();
     const { newText } = await prepareProposal(deps.proposeDeps, turnId, proposalId, args);
