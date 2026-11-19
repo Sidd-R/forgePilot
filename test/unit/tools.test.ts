@@ -18,6 +18,7 @@ import {
   prepareProposal,
   type ProposeEditDeps,
 } from '../../src/mcp/tools/propose_edit';
+import { AlreadyAppliedError } from '../../src/edits/matcher';
 import { ProposalStore } from '../../src/edits/proposals';
 import { CodeIndex } from '../../src/context/index';
 import type { TextResult } from '../../src/mcp/server';
@@ -191,6 +192,24 @@ describe('propose_edit', () => {
     assert.deepEqual(outcome.applied, ['h1']);
     assert.deepEqual(outcome.rejected, []);
     assert.equal(fs.readFileSync(path.join(root, file), 'utf8'), 'a = 10\nb = 2\n');
+  });
+
+  it('reports already-applied edits distinctly from mismatches', async () => {
+    const d = deps();
+    await assert.rejects(
+      prepareProposal(d, 'run1', 'p1', {
+        path: 'src/app.py',
+        edits: [{ old_text: 'zzz-nope', new_text: 'def main():' }],
+      }),
+      AlreadyAppliedError,
+    );
+    await assert.rejects(
+      prepareProposal(d, 'run1', 'p2', {
+        path: 'src/app.py',
+        edits: [{ old_text: 'zzz-nope', new_text: 'zzz-fresh' }],
+      }),
+      /did not match/,
+    );
   });
 
   it('refuses tool calls with no recorded review', async () => {

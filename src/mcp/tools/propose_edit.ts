@@ -6,6 +6,7 @@ import {
   createProposal,
   hashArgs,
 } from '../../edits/proposals';
+import { AlreadyAppliedError, MatchError, isAlreadyApplied } from '../../edits/matcher';
 import { resolveInside } from './jail';
 
 export const proposeEditSchema = z.object({
@@ -49,13 +50,26 @@ export async function prepareProposal(
   if (current !== null && parsed.content === undefined && !parsed.edits?.length) {
     throw new Error('propose_edit needs edits or content.');
   }
-  const { proposal, newText } = createProposal(
-    proposalId,
-    rel,
-    current,
-    { edits: parsed.edits, content: parsed.content, explanation: parsed.explanation },
-    hashInput(rel, parsed),
-  );
+  let built;
+  try {
+    built = createProposal(
+      proposalId,
+      rel,
+      current,
+      { edits: parsed.edits, content: parsed.content, explanation: parsed.explanation },
+      hashInput(rel, parsed),
+    );
+  } catch (err) {
+    if (
+      err instanceof MatchError &&
+      current !== null &&
+      isAlreadyApplied(current, parsed.edits)
+    ) {
+      throw new AlreadyAppliedError();
+    }
+    throw err;
+  }
+  const { proposal, newText } = built;
   if (proposal.hunks.length === 0) {
     throw new Error('propose_edit changes nothing; the file already has this content.');
   }

@@ -254,7 +254,7 @@ async function runFencedFallback(
     hashArgs({ path: deps.target.relPath, fenced: replacement }),
   );
   if (proposal.hunks.length === 0) {
-    deps.onNotice('The model proposed no changes.');
+    deps.onNotice('No changes to apply: the proposal matches the current file.');
     return 'rejected';
   }
   deps.store.addProposal(runId, proposal, full);

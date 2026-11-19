@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { MatchError, findOldText } from '../../src/edits/matcher';
+import { MatchError, findOldText, isAlreadyApplied } from '../../src/edits/matcher';
 
 describe('findOldText', () => {
   it('finds a unique exact match', () => {
@@ -44,5 +44,23 @@ describe('findOldText', () => {
 
   it('rejects empty old_text', () => {
     assert.throws(() => findOldText('abc', ''), MatchError);
+  });
+});
+
+describe('isAlreadyApplied', () => {
+  it('detects fully applied edits', () => {
+    assert.equal(isAlreadyApplied('x = 2\n', [{ old_text: 'x = 1', new_text: 'x = 2' }]), true);
+  });
+
+  it('rejects partial application and empty edits', () => {
+    assert.equal(
+      isAlreadyApplied('x = 2\n', [
+        { old_text: 'x = 1', new_text: 'x = 2' },
+        { old_text: 'y = 1', new_text: 'y = 2' },
+      ]),
+      false,
+    );
+    assert.equal(isAlreadyApplied('x = 2\n', []), false);
+    assert.equal(isAlreadyApplied('x = 2\n', undefined), false);
   });
 });
