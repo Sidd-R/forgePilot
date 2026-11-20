@@ -61,7 +61,8 @@
     "commands": [
       {
         "command": "forgePilot.inlineEdit",
-        "title": "ForgePilot: Inline Edit"
+        "title": "ForgePilot: Inline Edit\u2026",
+        "icon": "$(sparkle)"
       },
       {
         "command": "forgePilot.openAgent",
@@ -235,6 +236,13 @@
         {
           "command": "forgePilot.rejectHunk",
           "when": "false"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "forgePilot.inlineEdit",
+          "when": "editorTextFocus && !editorReadonly && resourceScheme == file",
+          "group": "1_modification@0"
         }
       ]
     },
