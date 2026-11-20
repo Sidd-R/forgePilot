@@ -16,6 +16,7 @@ import {
   type ProposeEditDeps,
 } from '../mcp/tools/propose_edit';
 import { createTurnHandler, type CommandChoice } from '../flows/turns';
+import { describeActivity } from './activity';
 import { MessageBuffer } from '../flows/messages';
 import { parseFencedBlock } from './fenced';
 
@@ -83,6 +84,8 @@ export interface InlineDeps {
   onTranscript?: (event: TranscriptEvent) => void;
   onSession?: (sessionId: string) => void;
   onReviewComplete?: (runId: string, proposalId: string) => void;
+  /** Short live description of what the model is doing. */
+  onActivity?: (text: string) => void;
   isCancelled: () => boolean;
   fixLimit?: number;
 }
@@ -103,6 +106,10 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
   let reviewsOpened = 0;
   let lastDeny = '';
   const reviewedTurns = new Set<string>();
+  // Once the user has decided the single review, the rest of the turn
+  // (a summary, or a retry after a reject) is waste: stop it early.
+  let stopTurn = false;
+  let stoppedEarly = false;
   const diagnosticsBefore = deps.diagnostics(deps.target.relPath);
   // Count reviews (not approvals): denied-before-staging calls must not
   // block the fenced fallback below.
@@ -123,6 +130,7 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
     onReviewComplete: (runId, proposalId, accepted) => {
       acceptedHunks += accepted;
       reviewedTurns.add(runId);
+      stopTurn = true;
       deps.onReviewComplete?.(runId, proposalId);
     },
     proposalGate: (turnId) =>
@@ -134,9 +142,23 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
     },
     isCancelled: deps.isCancelled,
   });
-  const onEvent: TurnEventCallback = (event, cursor, info) => {
+  const onEvent: TurnEventCallback = async (event, cursor, info) => {
     memory.buffer.feed(event);
-    return shared(event, cursor, info);
+    if (deps.onActivity && (event.type === 'model.message' || event.type === 'model.message.delta')) {
+      const activity = describeActivity(memory.buffer.get(event.id));
+      if (activity) {
+        deps.onActivity(activity);
+      }
+    }
+    await shared(event, cursor, info);
+    // Stop only once the decided call has responded: an accepted edit is
+    // written by the tool itself, after the approval, so cancelling any
+    // earlier could drop the write.
+    if (stopTurn && !stoppedEarly && event.type === 'tool.response') {
+      stoppedEarly = true;
+      deps.onActivity?.('Finishing…');
+      await deps.client.cancel(info.sessionId).catch(() => undefined);
+    }
   };
   const turnDeps: TurnDeps = {
     createSession: (spec) => deps.client.createSession(spec),
@@ -157,7 +179,7 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
       isCancelled: deps.isCancelled,
     });
     sessionId = result.sessionId;
-    if (result.terminal.status === 'cancelled' || deps.isCancelled()) {
+    if (deps.isCancelled() || (result.terminal.status === 'cancelled' && !stoppedEarly)) {
       return 'cancelled';
     }
   } catch (err) {
@@ -203,9 +225,12 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
       '\nFix them with propose_edit (same file, smallest change).';
     memory.buffer = new MessageBuffer();
     const reviewsBefore = reviewsOpened;
+    stopTurn = false;
+    stoppedEarly = false;
+    deps.onActivity?.('Fixing errors the edit introduced…');
     try {
       const terminal = await deps.client.streamTurn(sessionId, prompt, onEvent);
-      if (terminal.status === 'cancelled') {
+      if (terminal.status === 'cancelled' && !stoppedEarly) {
         return 'cancelled';
       }
       if (terminal.status !== 'done' || reviewsOpened === reviewsBefore) {

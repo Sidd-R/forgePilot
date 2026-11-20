@@ -44,19 +44,20 @@ describe('runInlineEdit run termination', () => {
   let reviewsOpened = 0;
   let streamCalls = 0;
   const answers: Array<{ allow: boolean; reason?: string }> = [];
+  const cancels: string[] = [];
+  let rejectAll = false;
 
   const review: ReviewPort = {
     open: (_root, runId, proposalId, _newText): Promise<ReviewResult> => {
       reviewsOpened += 1;
       const proposal = store.getProposal(runId, proposalId);
       assert.ok(proposal);
+      const decision = rejectAll ? 'rejected' : 'accepted';
       for (const hunk of proposal.hunks) {
-        store.decide(runId, proposalId, hunk.id, 'accepted');
+        store.decide(runId, proposalId, hunk.id, decision);
       }
-      return Promise.resolve({
-        accepted: proposal.hunks.map((h) => h.id),
-        rejected: [],
-      });
+      const ids = proposal.hunks.map((h) => h.id);
+      return Promise.resolve(rejectAll ? { accepted: [], rejected: ids } : { accepted: ids, rejected: [] });
     },
   };
 
@@ -79,6 +80,10 @@ describe('runInlineEdit run termination', () => {
     };
   }
 
+  function response(callId: string): WireEvent {
+    return { type: 'tool.response', id: `resp-${callId}`, thread_id: 'main', tool_call_id: callId, content: 'ok' };
+  }
+
   function scriptedClient(scripts: Array<(fire: TurnEventCallback) => Promise<unknown>>): TrueForgeClient {
     return {
       createSession: () => Promise.resolve('s1'),
@@ -89,6 +94,10 @@ describe('runInlineEdit run termination', () => {
       },
       answerApproval: (_s: string, _t: string, _a: never, allow: boolean, reason?: string) => {
         answers.push({ allow, reason });
+        return Promise.resolve();
+      },
+      cancel: (sessionId: string) => {
+        cancels.push(sessionId);
         return Promise.resolve();
       },
     } as unknown as TrueForgeClient;
@@ -138,6 +147,7 @@ describe('runInlineEdit run termination', () => {
     reviewsOpened = 0;
     streamCalls = 0;
     answers.length = 0;
+    cancels.length = 0;
   });
 
   it('stops after one review when diagnostics are pre-existing', async () => {
@@ -259,6 +269,8 @@ describe('runInlineEdit run termination', () => {
         return Promise.resolve()
           .then(() => fire(message('e1', 'call_1', editArgs), cursor, { sessionId: 's1' }))
           .then(() => fire(approval('call_1', 'e1'), cursor, { sessionId: 's1' }))
+          .then(() => assert.deepEqual(cancels, [], 'never stop before the approved tool has run'))
+          .then(() => fire(response('call_1'), cursor, { sessionId: 's1' }))
           .then(() => fire(message('e2', 'call_2', editArgs), cursor, { sessionId: 's1' }))
           .then(() => fire(approval('call_2', 'e2'), cursor, { sessionId: 's1' }));
       },
@@ -270,6 +282,26 @@ describe('runInlineEdit run termination', () => {
     assert.equal(answers[0].allow, true);
     assert.equal(answers[1].allow, false);
     assert.match(answers[1].reason ?? '', /one proposal per turn/);
+    assert.deepEqual(cancels, ['s1'], 'the turn is stopped once, right after the review');
+  });
+
+  it('stops the turn right after a full reject and reports rejected', async () => {
+    rejectAll = true;
+    const client = scriptedClient([
+      (fire) => {
+        const cursor = { turnId: 't1', lastEventId: 'e0' };
+        return Promise.resolve()
+          .then(() => fire(message('e1', 'call_1', editArgs), cursor, { sessionId: 's1' }))
+          .then(() => fire(approval('call_1', 'e1'), cursor, { sessionId: 's1' }))
+          .then(() => fire(response('call_1'), cursor, { sessionId: 's1' }));
+      },
+    ]);
+    const activity: string[] = [];
+    const outcome = await runInlineEdit({ ...depsFor(client, () => []), onActivity: (t) => activity.push(t) });
+    rejectAll = false;
+    assert.equal(outcome, 'rejected');
+    assert.deepEqual(cancels, ['s1']);
+    assert.ok(activity.some((t) => t.startsWith('Writing the edit')));
   });
 });
 
