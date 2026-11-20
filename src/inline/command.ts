@@ -5,7 +5,7 @@ import { loadAgentFile } from '../trueforge/agents';
 import type { CodeIndex } from '../context/index';
 import { readText } from '../edits/proposals';
 import { runInlineEdit, type InlineTarget } from './controller';
-import { PendingMarker } from './marker';
+import { LiveStatus, PendingMarker } from './marker';
 import { noticeLevel } from '../panel/present';
 
 function showNotice(message: string): void {
@@ -102,16 +102,16 @@ export async function runInlineCommand(host: Host): Promise<void> {
     editor,
     new vscode.Range(target.startLine - 1, 0, target.endLine - 1, 0),
   );
-  marker.set(`thinking with ${host.config.primaryModel}…`);
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `ForgePilot · ${where}`, cancellable: true },
     async (progress, token) => {
-      progress.report({ message: 'Thinking…' });
+      const status = new LiveStatus(progress, marker);
+      status.update(`Thinking with ${host.config.primaryModel}…`);
       // Hand the editor over to the diff colors once a proposal arrives.
       const review = {
         open: (rootDir: string, runId: string, proposalId: string, newText: string) => {
+          status.pause('Review the hunks in the editor (Accept / Reject above each change).');
           marker.dispose();
-          progress.report({ message: 'Review the hunks in the editor (Accept / Reject above each change).' });
           return host.review.open(rootDir, runId, proposalId, newText);
         },
       };
@@ -139,10 +139,10 @@ export async function runInlineCommand(host: Host): Promise<void> {
           readFullText: () => readText(host.rootDir, target.relPath),
           diagnostics: (rel) => collectDiagnostics(rel),
           onNotice: (message) => {
-            progress.report({ message });
-            marker.set(noticeLevel(message) === 'warn' ? 'retrying with fallback model…' : 'working…');
+            status.update(noticeLevel(message) === 'warn' ? 'Primary model failed; trying the fallback model…' : message);
             showNotice(message);
           },
+          onActivity: (text) => status.update(text),
           onSession: (sessionId) => {
             host.activeSession = sessionId;
           },
@@ -152,6 +152,7 @@ export async function runInlineCommand(host: Host): Promise<void> {
           isCancelled: () => host.cancelled,
         });
       } catch (err) {
+        status.stop();
         marker.dispose();
         host.activeSession = undefined;
         void vscode.window.showErrorMessage(
@@ -159,6 +160,7 @@ export async function runInlineCommand(host: Host): Promise<void> {
         );
         return;
       }
+      status.stop();
       marker.dispose();
       host.activeSession = undefined;
       if (outcome === 'applied') {
