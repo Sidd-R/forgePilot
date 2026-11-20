@@ -1,47 +1,32 @@
 import * as vscode from 'vscode';
-import type { ContextPack, TranscriptEvent } from '../types';
+import type { TranscriptEvent } from '../types';
 import { loadAgentFile } from '../trueforge/agents';
 import { buildPack } from '../context/pack';
-import { resolveFileMention, resolveSymbolMention } from '../context/mentions';
 import { runAgentTurn } from '../flows/agent';
-import { parseMentions, renderPack } from './prompt';
+import { packSummary, parseMentions, renderPack } from './prompt';
+import {
+  askCommand,
+  errorText,
+  mentionItems,
+  openWorkspaceFile,
+  type PanelActions,
+  type PanelInbound,
+} from './requests';
 import { panelHtml } from './view';
 import { ChatHistory, type ChatStorage } from './history';
-import type { Host } from '../host';
-
-/** Webview -> host messages. */
-export interface PanelInbound {
-  type:
-    | 'prompt'
-    | 'cancel'
-    | 'undoLast'
-    | 'undoRun'
-    | 'newChat'
-    | 'mentionQuery'
-    | 'historyList'
-    | 'historyOpen';
-  text?: string;
-  kind?: 'file' | 'symbol';
-  query?: string;
-  id?: number;
-  chatId?: string;
-}
-
-export interface PanelActions {
-  cancel: () => Promise<void>;
-  undoLast: () => Promise<void>;
-  undoRun: () => Promise<void>;
-}
+import { sessionUrl } from './present';
+import { setBusy, type Host } from '../host';
 
 /** Agent panel: prompt box, context card, streamed transcript, run controls. */
 export class PanelHost implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private sessionId: string | undefined;
   private running = false;
+  private startedAt = 0;
+  private model = '';
   private queue: TranscriptEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | undefined;
   private readonly history: ChatHistory;
-  private lastPack: ContextPack | undefined;
 
   constructor(
     private readonly host: Host,
@@ -52,30 +37,63 @@ export class PanelHost implements vscode.WebviewViewProvider {
     this.history = new ChatHistory(storage);
   }
 
+  get currentSessionId(): string | undefined {
+    return this.sessionId;
+  }
+
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = { enableScripts: true };
     view.webview.html = panelHtml(view.webview, this.extensionUri);
     view.webview.onDidReceiveMessage((message: PanelInbound) => {
-      void this.onMessage(message);
+      void this.onMessage(message).catch((err: unknown) => this.notify(errorText(err)));
     });
     // Rehydrate after reloads or disposal: retained views never reach here.
-    if (this.lastPack) {
-      this.post('contextCard', { pack: this.lastPack });
-    }
     const live = this.history.liveEvents();
     if (live.length > 0) {
       this.post('transcriptBatch', { events: live });
     }
-    this.post('runState', { running: this.running });
+    this.postRunState();
+    this.refreshMeta();
   }
 
-  reveal(): void {
-    void vscode.commands.executeCommand('forgePilot.panel.focus');
+  /** Model, session link and undo availability for the header. */
+  refreshMeta(): void {
+    this.post('meta', {
+      model: this.model || this.host.config.primaryModel,
+      fallbacks: this.host.config.fallbackModels,
+      sessionUrl: this.sessionId ? sessionUrl(this.host.config.baseUrl, this.sessionId) : '',
+      canUndo: this.host.lastRunId !== undefined,
+    });
+  }
+
+  newChat(): void {
+    if (this.running) {
+      this.notify('Cancel the current run before starting a new chat.');
+      return;
+    }
+    this.history.finalize();
+    this.sessionId = undefined;
+    this.model = '';
+    this.post('cleared');
+    this.refreshMeta();
+  }
+
+  showHistory(): void {
+    this.post('historyList', { items: this.history.list() });
+  }
+
+  notifyUndo(scope: 'last' | 'run', files: string): void {
+    this.notify(`${scope === 'last' ? 'Undid last change' : 'Undid run'}: ${files}`);
+    this.refreshMeta();
   }
 
   private post(type: string, payload: Record<string, unknown> = {}): void {
     void this.view?.webview.postMessage({ type, ...payload });
+  }
+
+  private postRunState(): void {
+    this.post('runState', { running: this.running, startedAt: this.startedAt });
   }
 
   private flush(): void {
@@ -115,28 +133,28 @@ export class PanelHost implements vscode.WebviewViewProvider {
         await this.actions.undoRun();
         break;
       case 'newChat':
-        this.history.finalize();
-        this.sessionId = undefined;
-        this.lastPack = undefined;
-        this.post('cleared');
+        this.newChat();
         break;
       case 'historyList':
-        this.post('historyList', { items: this.history.list() });
+        this.showHistory();
         break;
       case 'historyOpen':
         if (message.chatId) {
           this.post('historyOpened', { events: this.history.open(message.chatId) });
         }
         break;
+      case 'openFile':
+        if (message.path) {
+          await openWorkspaceFile(this.host.rootDir, message.path, message.line ?? 1);
+        }
+        break;
+      case 'openSession':
+        await vscode.commands.executeCommand('forgePilot.openSession');
+        break;
       case 'mentionQuery':
         this.post('mentionResults', {
           id: message.id ?? 0,
-          items:
-            message.kind === 'file'
-              ? resolveFileMention(this.host.index, message.query ?? '')
-              : resolveSymbolMention(this.host.index, message.query ?? '').map(
-                  (hit) => `${hit.symbol} (${hit.path}:${hit.startLine})`,
-                ),
+          items: mentionItems(this.host.index, message.kind ?? 'file', message.query ?? ''),
         });
         break;
     }
@@ -146,23 +164,32 @@ export class PanelHost implements vscode.WebviewViewProvider {
     if (this.running || !prompt.trim()) {
       return;
     }
+    if (this.host.busy) {
+      this.notify('An inline edit is in progress. Finish or cancel it first.');
+      return;
+    }
     if (!this.host.config.primaryModel) {
-      this.notify('Set forgepilot.models.primary first.');
+      this.notify('No model configured: set forgepilot.models.primary in Settings.');
       return;
     }
     this.running = true;
-    this.post('runState', { running: true });
+    setBusy(this.host, true);
+    this.host.cancelled = false;
+    this.startedAt = Date.now();
+    this.postRunState();
     this.history.beginPrompt(prompt);
-    const { files, symbols, clean } = parseMentions(this.host.index, prompt);
-    const pack = buildPack(this.host.index, clean, {
-      budget: this.host.config.tokenBudget,
-      mentionedFiles: files,
-      mentionedSymbols: symbols,
-    });
-    this.lastPack = pack;
-    this.post('contextCard', { pack });
+    this.pushTranscript({ kind: 'user', text: prompt });
+    this.flush();
     this.flushTimer = setInterval(() => this.flush(), 50);
     try {
+      const { files, symbols, clean } = parseMentions(this.host.index, prompt);
+      const pack = buildPack(this.host.index, clean, {
+        budget: this.host.config.tokenBudget,
+        mentionedFiles: files,
+        mentionedSymbols: symbols,
+      });
+      // Inline so saved chats keep which files were chosen and why.
+      this.pushTranscript({ kind: 'context', text: packSummary(pack) });
       const spec = loadAgentFile(
         this.host.agentsDir,
         'forgepilot-coder.yaml',
@@ -176,38 +203,48 @@ export class PanelHost implements vscode.WebviewViewProvider {
         store: this.host.store,
         review: this.host.review,
         proposeDeps: this.host.proposeDeps,
-        askCommand: async (command) => {
-          const choice = await vscode.window.showInformationMessage(
-            `Allow command? ${command}`,
-            'Allow once',
-            'Allow for this session',
-            'Deny',
-          );
-          if (choice === 'Allow for this session') {
-            return 'session';
-          }
-          return choice === 'Allow once' ? 'once' : 'deny';
-        },
+        askCommand,
         onTranscript: (event) => this.pushTranscript(event),
         onNotice: (text) => this.notify(text),
         onSession: (sessionId) => {
           this.sessionId = sessionId;
           this.host.activeSession = sessionId;
+          this.refreshMeta();
+        },
+        onReviewComplete: (runId, proposalId, accepted, rejected) => {
+          this.host.lastRunId = runId;
+          const path = this.host.store.getProposal(runId, proposalId)?.path ?? proposalId;
+          this.pushTranscript({
+            kind: 'review',
+            text: `${path}: ${accepted} accepted, ${rejected} rejected`,
+          });
+          this.refreshMeta();
         },
         isCancelled: () => this.host.cancelled,
         sessionId: this.sessionId,
       });
-      if (result.sessionId) {
+      if (result.model) {
+        this.model = result.model;
+      }
+      if (result.status === 'error') {
+        // Next prompt starts a fresh session with the full fallback chain.
+        this.sessionId = undefined;
+      } else if (result.sessionId) {
         this.sessionId = result.sessionId;
       }
-      this.pushTranscript({ kind: 'status', text: `Turn ${result.status}` });
+      this.pushTranscript({ kind: 'status', text: result.status });
+    } catch (err) {
+      this.pushTranscript({ kind: 'notice', text: errorText(err) });
+      this.pushTranscript({ kind: 'status', text: 'error' });
     } finally {
       clearInterval(this.flushTimer);
       this.flushTimer = undefined;
       this.flush();
       this.running = false;
+      setBusy(this.host, false);
       this.host.activeSession = undefined;
-      this.post('runState', { running: false });
+      this.postRunState();
+      this.refreshMeta();
     }
   }
 }

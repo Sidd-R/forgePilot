@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
-import { buildHost, type Host } from './host';
+import { buildHost, setBusy, type Host } from './host';
+import { StatusIndicator } from './status';
+import { editorListeners } from './listeners';
+import { sessionUrl } from './panel/present';
 import { loadAgentFile, syncAgent } from './trueforge/agents';
-import { CodeIndex } from './context/index';
 import { applyRestores } from './edits/proposals';
 import { runInlineCommand } from './inline/command';
 import { PanelHost } from './panel/host';
@@ -54,64 +56,95 @@ function registerListeners(context: vscode.ExtensionContext, host: Host): void {
     return;
   }
   listenersRegistered = true;
-  context.subscriptions.push(
-    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, host.review.view),
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor) {
-        host.review.view.refresh(editor);
-      }
-    }),
-    vscode.workspace.onDidCloseTextDocument((doc) => {
-      const found = host.review.reviewForUri(doc.uri);
-      if (found) {
-        void host.review.closeAsRejectAll(host.rootDir, found.runId, found.proposalId);
-      }
-    }),
-    vscode.workspace.onDidSaveTextDocument(() => {
-      const fresh = CodeIndex.build(host.rootDir);
-      host.index = fresh;
-      host.indexBox.index = fresh;
-      void fresh.loadCochange(host.rootDir);
-    }),
-  );
+  const status = new StatusIndicator();
+  host.onBusyChange = (busy) => status.set(busy);
+  context.subscriptions.push(status, ...editorListeners(host, () => panelHost?.refreshMeta()));
 }
 
 async function inlineEdit(context: vscode.ExtensionContext): Promise<void> {
-  await withHost(context, (host) => runInlineCommand(host));
+  await withHost(context, async (host) => {
+    if (host.busy) {
+      void vscode.window.showWarningMessage('ForgePilot: a run is already in progress. Cancel it first.');
+      return;
+    }
+    setBusy(host, true);
+    try {
+      await runInlineCommand(host);
+    } finally {
+      setBusy(host, false);
+    }
+  });
+}
+
+/** Accept/Reject All: from a lens (ids given) or the editor title (active file). */
+function decideAll(
+  context: vscode.ExtensionContext,
+  decision: 'accepted' | 'rejected',
+  runId?: string,
+  proposalId?: string,
+): void {
+  void withHost(context, (host) => {
+    const uri = vscode.window.activeTextEditor?.document.uri;
+    const found =
+      typeof runId === 'string' && typeof proposalId === 'string'
+        ? { runId, proposalId }
+        : uri
+          ? host.review.reviewForUri(uri)
+          : undefined;
+    if (!found) {
+      void vscode.window.showInformationMessage('ForgePilot: no pending review in this editor.');
+      return undefined;
+    }
+    return host.review.decideAll(host.rootDir, found.runId, found.proposalId, decision);
+  });
+}
+
+function openSession(host: Host, sessionId: string | undefined): void {
+  const target = sessionId ? sessionUrl(host.config.baseUrl, sessionId) : host.config.baseUrl;
+  void vscode.env.openExternal(vscode.Uri.parse(target));
 }
 
 async function cancelActive(context: vscode.ExtensionContext): Promise<void> {
   await withHost(context, async (host) => {
-    if (!host.activeSession) {
+    if (!host.busy && !host.activeSession) {
+      void vscode.window.showInformationMessage('ForgePilot: nothing is running.');
       return;
     }
+    // Mark cancelled first so a run still creating its session stops
+    // before its first turn, then tear down whatever already exists.
     host.cancelled = true;
     const sessionId = host.activeSession;
     host.activeSession = undefined;
-    await host.client.cancel(sessionId).catch(() => undefined);
     host.runner.kill();
     await host.review.closeAllAsRejectAll(host.rootDir);
-    void vscode.window.showInformationMessage('ForgePilot: run cancelled.');
+    if (sessionId) {
+      await host.client.cancel(sessionId).catch(() => undefined);
+    }
+    void vscode.window.showInformationMessage('ForgePilot: run cancelled. No files were changed by unreviewed edits.');
   });
 }
 
-async function undoLast(context: vscode.ExtensionContext): Promise<void> {
+async function undo(context: vscode.ExtensionContext, scope: 'last' | 'run'): Promise<void> {
   await withHost(context, async (host) => {
-    if (!host.lastRunId) {
+    if (host.busy) {
+      void vscode.window.showWarningMessage('ForgePilot: finish or cancel the current run before undoing.');
       return;
     }
-    await applyRestores(host.rootDir, host.store.undoLast(host.lastRunId));
-    void vscode.window.showInformationMessage('ForgePilot: undone last change.');
-  });
-}
-
-async function undoRun(context: vscode.ExtensionContext): Promise<void> {
-  await withHost(context, async (host) => {
-    if (!host.lastRunId) {
+    const restores = host.lastRunId
+      ? scope === 'last'
+        ? host.store.undoLast(host.lastRunId)
+        : host.store.undoRun(host.lastRunId)
+      : [];
+    if (restores.length === 0) {
+      void vscode.window.showInformationMessage('ForgePilot: nothing to undo.');
       return;
     }
-    await applyRestores(host.rootDir, host.store.undoRun(host.lastRunId));
-    void vscode.window.showInformationMessage('ForgePilot: undone run.');
+    await applyRestores(host.rootDir, restores);
+    const files = restores.map((restore) => restore.path).join(', ');
+    void vscode.window.showInformationMessage(
+      `ForgePilot: ${scope === 'last' ? 'undid last change' : 'undid run'} (${files}).`,
+    );
+    panelHost?.notifyUndo(scope, files);
   });
 }
 
@@ -143,8 +176,8 @@ export function activate(context: vscode.ExtensionContext): void {
           host,
           {
             cancel: () => cancelActive(context),
-            undoLast: () => undoLast(context),
-            undoRun: () => undoRun(context),
+            undoLast: () => undo(context, 'last'),
+            undoRun: () => undo(context, 'run'),
           },
           context.extensionUri,
           {
@@ -183,28 +216,19 @@ export function activate(context: vscode.ExtensionContext): void {
         );
       },
     ),
-    vscode.commands.registerCommand('forgePilot.acceptAll', () => {
-      void withHost(context, (host) => {
-        const uri = vscode.window.activeTextEditor?.document.uri;
-        const found = uri ? host.review.reviewForUri(uri) : undefined;
-        if (found) {
-          return host.review.decideAll(host.rootDir, found.runId, found.proposalId, 'accepted');
-        }
-        return undefined;
-      });
+    vscode.commands.registerCommand('forgePilot.acceptAll', (runId?: string, proposalId?: string) =>
+      decideAll(context, 'accepted', runId, proposalId),
+    ),
+    vscode.commands.registerCommand('forgePilot.rejectAll', (runId?: string, proposalId?: string) =>
+      decideAll(context, 'rejected', runId, proposalId),
+    ),
+    vscode.commands.registerCommand('forgePilot.undoLast', () => undo(context, 'last')),
+    vscode.commands.registerCommand('forgePilot.undoRun', () => undo(context, 'run')),
+    vscode.commands.registerCommand('forgePilot.newChat', () => panelHost?.newChat()),
+    vscode.commands.registerCommand('forgePilot.showHistory', () => panelHost?.showHistory()),
+    vscode.commands.registerCommand('forgePilot.openSession', () => {
+      void withHost(context, (host) => openSession(host, panelHost?.currentSessionId));
     }),
-    vscode.commands.registerCommand('forgePilot.rejectAll', () => {
-      void withHost(context, (host) => {
-        const uri = vscode.window.activeTextEditor?.document.uri;
-        const found = uri ? host.review.reviewForUri(uri) : undefined;
-        if (found) {
-          return host.review.decideAll(host.rootDir, found.runId, found.proposalId, 'rejected');
-        }
-        return undefined;
-      });
-    }),
-    vscode.commands.registerCommand('forgePilot.undoLast', () => undoLast(context)),
-    vscode.commands.registerCommand('forgePilot.undoRun', () => undoRun(context)),
     vscode.commands.registerCommand('forgePilot.loadAgents', () => loadAgents(context)),
   );
 }

@@ -37,8 +37,16 @@ export interface Host {
   agentsDir: string;
   config: ForgePilotConfig;
   activeSession: string | undefined;
+  /** True while an inline edit or agent turn is in flight. Use setBusy. */
+  busy: boolean;
+  onBusyChange?: (busy: boolean) => void;
   cancelled: boolean;
   lastRunId: string | undefined;
+}
+
+export function setBusy(host: Host, busy: boolean): void {
+  host.busy = busy;
+  host.onBusyChange?.(busy);
 }
 
 export function readConfig(): ForgePilotConfig {
@@ -157,6 +165,7 @@ export async function buildHost(
     agentsDir: vscode.Uri.joinPath(extensionUri, 'agents').fsPath,
     config,
     activeSession: undefined,
+    busy: false,
     cancelled: false,
     lastRunId: undefined,
   };

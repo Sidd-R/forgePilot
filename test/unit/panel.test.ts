@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMentions, renderPack } from '../../src/panel/prompt';
+import { packSummary, parseMentions, renderPack } from '../../src/panel/prompt';
 import { CodeIndex } from '../../src/context/index';
 import { buildPack } from '../../src/context/pack';
 import * as fs from 'node:fs';
@@ -38,5 +38,23 @@ describe('renderPack', () => {
     assert.match(rendered, /\[Context:/);
     assert.match(rendered, /cli\.py/);
     assert.match(rendered, /User request: add command/);
+  });
+});
+
+describe('packSummary', () => {
+  it('keeps ranked rows and budget but drops chunk bodies', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fpsum-'));
+    fs.writeFileSync(path.join(root, 'cli.py'), 'def run_command():\n    pass\n');
+    const index = CodeIndex.build(root);
+    const pack = buildPack(index, 'run command', { budget: 8000 });
+    const summary = JSON.parse(packSummary(pack)) as {
+      budget: number;
+      items: Array<Record<string, unknown>>;
+    };
+    assert.equal(summary.budget, 8000);
+    assert.ok(summary.items.length > 0);
+    assert.equal(summary.items[0]['path'], 'cli.py');
+    assert.ok(typeof summary.items[0]['reason'] === 'string');
+    assert.equal(summary.items[0]['text'], undefined);
   });
 });

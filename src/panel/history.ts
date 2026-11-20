@@ -49,9 +49,15 @@ export class ChatHistory {
     if (!this.current || events.length === 0) {
       return;
     }
-    const room = MAX_EVENTS_PER_CHAT - this.current.events.length;
-    if (room > 0) {
-      this.current.events.push(...events.slice(0, room));
+    const stored = this.current.events;
+    for (const event of events) {
+      // Streamed fragments fold into their line so long runs fit the cap.
+      const last = stored[stored.length - 1];
+      if (event.delta && event.id && last?.id === event.id) {
+        stored[stored.length - 1] = { ...last, text: last.text + event.text };
+      } else if (stored.length < MAX_EVENTS_PER_CHAT) {
+        stored.push(event);
+      }
     }
   }
 

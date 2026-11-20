@@ -73,4 +73,19 @@ describe('ChatHistory', () => {
     history.finalize();
     assert.equal(history.open(history.list()[0].id).length, 1000);
   });
+
+  it('folds streamed deltas into their message so the cap holds whole runs', () => {
+    const store = memoryStore();
+    const history = new ChatHistory(store);
+    history.beginPrompt('stream');
+    history.append([{ kind: 'text', text: '', id: 'm1' }]);
+    for (let i = 0; i < 2000; i += 1) {
+      history.append([{ kind: 'text', text: 'x', id: 'm1', delta: true }]);
+    }
+    history.append([{ kind: 'status', text: 'done' }]);
+    const live = history.liveEvents();
+    assert.equal(live.length, 2);
+    assert.equal(live[0].text.length, 2000);
+    assert.equal(live[1].text, 'done');
+  });
 });

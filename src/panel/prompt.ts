@@ -19,6 +19,21 @@ export function renderPack(pack: ContextPack, prompt: string): string {
   return parts.join('\n');
 }
 
+/** Context pack for the transcript: ranked rows and budget, no chunk bodies. */
+export function packSummary(pack: ContextPack): string {
+  return JSON.stringify({
+    totalTokens: pack.totalTokens,
+    budget: pack.budget,
+    items: pack.items.map(({ path, startLine, endLine, reason, tokens }) => ({
+      path,
+      startLine,
+      endLine,
+      reason,
+      tokens,
+    })),
+  });
+}
+
 const MENTION_PATTERN = /@(file|symbol)\s+([^\s@]+)/g;
 
 /** Split @file/@symbol mentions out of a prompt, resolving each. */

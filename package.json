@@ -24,6 +24,9 @@
     "onCommand:forgePilot.undoLast",
     "onCommand:forgePilot.undoRun",
     "onCommand:forgePilot.loadAgents",
+    "onCommand:forgePilot.newChat",
+    "onCommand:forgePilot.showHistory",
+    "onCommand:forgePilot.openSession",
     "onView:forgePilot.panel"
   ],
   "main": "./dist/extension.js",
@@ -34,7 +37,9 @@
     "test:unit": "tsc && node --test \"out/test/unit/**/*.test.js\"",
     "test:integration": "tsc && node --test \"out/test/integration/**/*.test.js\" --test-timeout=120000",
     "validate": "npm run typecheck && npm run lint && npm run build && npm run test:unit && npm run test:integration",
-    "vscode:prepublish": "npm run build"
+    "vscode:prepublish": "npm run build",
+    "preview:panel": "tsc && node esbuild.js && node scripts/preview-panel.js",
+    "validate:offline": "npm run typecheck && npm run lint && npm run build && npm run test:unit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
@@ -64,7 +69,8 @@
       },
       {
         "command": "forgePilot.cancel",
-        "title": "ForgePilot: Cancel"
+        "title": "ForgePilot: Cancel",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "forgePilot.acceptHunk",
@@ -76,11 +82,13 @@
       },
       {
         "command": "forgePilot.acceptAll",
-        "title": "ForgePilot: Accept All Hunks"
+        "title": "ForgePilot: Accept All Hunks",
+        "icon": "$(check-all)"
       },
       {
         "command": "forgePilot.rejectAll",
-        "title": "ForgePilot: Reject All Hunks"
+        "title": "ForgePilot: Reject All Hunks",
+        "icon": "$(close-all)"
       },
       {
         "command": "forgePilot.undoLast",
@@ -93,6 +101,24 @@
       {
         "command": "forgePilot.loadAgents",
         "title": "ForgePilot: Load Agent Definitions"
+      },
+      {
+        "command": "forgePilot.newChat",
+        "title": "New Chat",
+        "category": "ForgePilot",
+        "icon": "$(add)"
+      },
+      {
+        "command": "forgePilot.showHistory",
+        "title": "Chat History",
+        "category": "ForgePilot",
+        "icon": "$(history)"
+      },
+      {
+        "command": "forgePilot.openSession",
+        "title": "Open TrueForge Session",
+        "category": "ForgePilot",
+        "icon": "$(link-external)"
       }
     ],
     "keybindings": [
@@ -106,6 +132,11 @@
         "command": "forgePilot.openAgent",
         "key": "ctrl+alt+l",
         "mac": "cmd+alt+l"
+      },
+      {
+        "command": "forgePilot.cancel",
+        "key": "ctrl+alt+backspace",
+        "mac": "cmd+alt+backspace"
       }
     ],
     "configuration": {
@@ -142,11 +173,12 @@
       }
     },
     "views": {
-      "explorer": [
+      "forgePilot": [
         {
           "type": "webview",
           "id": "forgePilot.panel",
-          "name": "ForgePilot"
+          "name": "Agent",
+          "icon": "media/forgepilot.svg"
         }
       ]
     },
@@ -161,6 +193,57 @@
           "command": "forgePilot.rejectAll",
           "when": "forgePilot.reviewActive",
           "group": "navigation"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "forgePilot.newChat",
+          "when": "view == forgePilot.panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "forgePilot.showHistory",
+          "when": "view == forgePilot.panel",
+          "group": "navigation@2"
+        },
+        {
+          "command": "forgePilot.openSession",
+          "when": "view == forgePilot.panel",
+          "group": "navigation@3"
+        },
+        {
+          "command": "forgePilot.undoLast",
+          "when": "view == forgePilot.panel",
+          "group": "undo@1"
+        },
+        {
+          "command": "forgePilot.undoRun",
+          "when": "view == forgePilot.panel",
+          "group": "undo@2"
+        },
+        {
+          "command": "forgePilot.loadAgents",
+          "when": "view == forgePilot.panel",
+          "group": "setup@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "forgePilot.acceptHunk",
+          "when": "false"
+        },
+        {
+          "command": "forgePilot.rejectHunk",
+          "when": "false"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "forgePilot",
+          "title": "ForgePilot",
+          "icon": "media/forgepilot.svg"
         }
       ]
     }
