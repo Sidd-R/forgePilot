@@ -16,6 +16,8 @@ export class ReviewController implements ReviewPort {
   readonly view: ReviewView;
   private autoSaveDepth = 0;
   private autoSavePrev: unknown;
+  /** Bumped on Cancel so a late answer to a new-file prompt is ignored. */
+  private cancelGeneration = 0;
 
   constructor(private readonly store: ProposalStore) {
     this.view = new ReviewView(() => [...this.reviews.values()]);
@@ -24,8 +26,13 @@ export class ReviewController implements ReviewPort {
   /** Suppress auto-save while any review is open (refcounted for batches). */
   private async suppressAutoSave(): Promise<void> {
     if (this.autoSaveDepth === 0) {
-      this.autoSavePrev = vscode.workspace.getConfiguration('files').get('autoSave');
-      await vscode.workspace.getConfiguration('files').update('autoSave', 'off', true);
+      // Remember the user-level value itself (often unset), not the
+      // effective one, so restoring never pins a default into settings.
+      const files = vscode.workspace.getConfiguration('files');
+      this.autoSavePrev = files.inspect('autoSave')?.globalValue;
+      if (files.get('autoSave') !== 'off') {
+        await files.update('autoSave', 'off', true);
+      }
     }
     this.autoSaveDepth += 1;
   }
@@ -102,14 +109,19 @@ export class ReviewController implements ReviewPort {
       content: newText,
       language: languageFor(proposal.path),
     });
-    await vscode.window.showTextDocument(doc);
+    await vscode.window.showTextDocument(doc, { preview: false });
+    const generation = this.cancelGeneration;
+    const lines = newText.split('\n').length;
     const choice = await vscode.window.showInformationMessage(
-      `Accept new file ${proposal.path}?`,
-      'Accept',
+      `ForgePilot proposes a new file ${proposal.path} (${lines} lines). Create it?`,
+      'Create file',
       'Reject',
     );
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-    if (choice === 'Accept') {
+    // Discard the untitled preview without a "save changes?" prompt,
+    // even if the user switched tabs while deciding.
+    await vscode.window.showTextDocument(doc, { preview: false });
+    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+    if (choice === 'Create file' && generation === this.cancelGeneration) {
       this.store.decide(runId, proposalId, 'h1', 'accepted');
       await writeFile(rootDir, proposal.path, newText);
       return { accepted: ['h1'], rejected: [] };
@@ -170,6 +182,7 @@ export class ReviewController implements ReviewPort {
 
   /** Close every open review as Reject All (Cancel path). */
   async closeAllAsRejectAll(rootDir: string): Promise<void> {
+    this.cancelGeneration += 1;
     for (const review of [...this.reviews.values()]) {
       await this.closeAsRejectAll(rootDir, review.runId, review.proposalId);
     }

@@ -30,26 +30,34 @@ export function planLenses(
   starts: Map<string, number>,
 ): PlannedLens[] {
   const lenses: PlannedLens[] = [];
-  for (const hunk of hunks) {
+  const pending = hunks.filter((hunk) => !decided.has(hunk.id));
+  hunks.forEach((hunk, index) => {
     if (decided.has(hunk.id)) {
-      continue;
+      return;
     }
     const line = starts.get(hunk.id) ?? 1;
+    const size = `+${hunk.newLines.length} −${hunk.oldLines.length}`;
     lenses.push(
       {
         line,
-        title: `✓ Accept ${hunk.id}`,
+        title: `✓ Accept hunk ${index + 1}/${hunks.length} (${size})`,
         command: 'forgePilot.acceptHunk',
         args: [runId, proposalId, hunk.id],
       },
       {
         line,
-        title: `✗ Reject ${hunk.id}`,
+        title: '✗ Reject',
         command: 'forgePilot.rejectHunk',
         args: [runId, proposalId, hunk.id],
       },
     );
-  }
+    if (pending.length > 1 && hunk.id === pending[0].id) {
+      lenses.push(
+        { line, title: `Accept all ${pending.length}`, command: 'forgePilot.acceptAll', args: [runId, proposalId] },
+        { line, title: 'Reject all', command: 'forgePilot.rejectAll', args: [runId, proposalId] },
+      );
+    }
+  });
   return lenses;
 }
 

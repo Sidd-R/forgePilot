@@ -15,23 +15,31 @@ const starts = new Map([
 describe('planLenses', () => {
   it('shows per-hunk buttons only for undecided hunks', () => {
     const lenses = planLenses('r1', 'p1', hunks, new Set(['h1']), starts);
-    const titles = lenses.map((lens) => lens.title);
-    assert.ok(!titles.some((title) => title.includes('h1')));
+    assert.ok(!lenses.some((lens) => lens.args.includes('h1')));
+    assert.deepEqual(lenses, [
+      {
+        line: 21,
+        title: '✓ Accept hunk 2/2 (+1 −1)',
+        command: 'forgePilot.acceptHunk',
+        args: ['r1', 'p1', 'h2'],
+      },
+      {
+        line: 21,
+        title: '✗ Reject',
+        command: 'forgePilot.rejectHunk',
+        args: ['r1', 'p1', 'h2'],
+      },
+    ]);
+  });
+
+  it('adds file-level accept/reject all on the first pending hunk', () => {
+    const lenses = planLenses('r1', 'p1', hunks, new Set(), starts);
+    const all = lenses.filter((lens) => lens.command.endsWith('All'));
     assert.deepEqual(
-      lenses.filter((lens) => lens.title.includes('h2')),
+      all.map((lens) => [lens.line, lens.title, lens.args]),
       [
-        {
-          line: 21,
-          title: '✓ Accept h2',
-          command: 'forgePilot.acceptHunk',
-          args: ['r1', 'p1', 'h2'],
-        },
-        {
-          line: 21,
-          title: '✗ Reject h2',
-          command: 'forgePilot.rejectHunk',
-          args: ['r1', 'p1', 'h2'],
-        },
+        [10, 'Accept all 2', ['r1', 'p1']],
+        [10, 'Reject all', ['r1', 'p1']],
       ],
     );
   });
