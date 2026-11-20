@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { Hunk } from '../types';
-import { planDecorations, planLenses } from './reviewPlan';
+import { layoutReview, planDecorations, planLenses, type ReviewLayout } from './reviewPlan';
 
 export interface ReviewResult {
   accepted: string[];
@@ -19,26 +19,9 @@ export interface OpenReview {
   resolve: (result: ReviewResult) => void;
 }
 
-export function appliedOf(review: OpenReview): Set<string> {
-  return new Set(
-    review.hunks.map((h) => h.id).filter((id) => !review.rejected.has(id)),
-  );
-}
-
-/**
- * Buffer-space start line (1-based) per hunk id, given the set of hunks
- * currently applied in the buffer. Unapplied hunks keep original lines.
- */
-export function mapHunkLines(hunks: Hunk[], applied: ReadonlySet<string>): Map<string, number> {
-  const out = new Map<string, number>();
-  let delta = 0;
-  for (const hunk of hunks) {
-    out.set(hunk.id, hunk.startLine + delta);
-    if (applied.has(hunk.id)) {
-      delta += hunk.newLines.length - hunk.oldLines.length;
-    }
-  }
-  return out;
+/** Current buffer layout of a review: text plus undecided hunk spans. */
+export function layoutOf(review: OpenReview): ReviewLayout {
+  return layoutReview(review.beforeText, review.hunks, review.decided, review.accepted);
 }
 
 const LANGUAGE_BY_EXT: Record<string, string> = {
@@ -81,8 +64,12 @@ export class ReviewView implements vscode.CodeLensProvider {
     isWholeLine: true,
   });
   private readonly removedType = vscode.window.createTextEditorDecorationType({
+    backgroundColor: new vscode.ThemeColor('diffEditor.removedTextBackground'),
     overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.deletedForeground'),
     overviewRulerLane: vscode.OverviewRulerLane.Full,
+    isWholeLine: true,
+    opacity: '0.75',
+    textDecoration: 'line-through',
   });
 
   constructor(private readonly getReviews: () => OpenReview[]) {}
@@ -97,13 +84,11 @@ export class ReviewView implements vscode.CodeLensProvider {
       if (review.uri.toString() !== document.uri.toString()) {
         continue;
       }
-      const starts = mapHunkLines(review.hunks, appliedOf(review));
       for (const lens of planLenses(
         review.runId,
         review.proposalId,
         review.hunks,
-        review.decided,
-        starts,
+        layoutOf(review).spans,
       )) {
         const range = new vscode.Range(lens.line - 1, 0, lens.line - 1, 0);
         lenses.push(
@@ -127,24 +112,11 @@ export class ReviewView implements vscode.CodeLensProvider {
       editor.setDecorations(this.removedType, []);
       return;
     }
-    const starts = mapHunkLines(review.hunks, appliedOf(review));
-    const plan = planDecorations(review.hunks, review.decided, starts);
-    const added = plan.added.map(
-      (span) => new vscode.Range(span.startLine - 1, 0, span.endLine - 1, 1_000_000),
-    );
-    // `before` content renders inline, so multi-line removed text
-    // would collapse onto the added line. Show a one-line chip and
-    // keep the full text in the hover, which renders markdown.
-    const removed: vscode.DecorationOptions[] = plan.removed.map((span) => ({
-      range: new vscode.Range(span.line - 1, 0, span.line - 1, 0),
-      hoverMessage: `Removed:\n\`\`\`\n${span.text}\n\`\`\``,
-      renderOptions: {
-        before: {
-          contentText: `− ${span.count} line${span.count === 1 ? '' : 's'} removed `,
-          backgroundColor: new vscode.ThemeColor('diffEditor.removedTextBackground'),
-        },
-      },
-    }));
+    const plan = planDecorations(layoutOf(review).spans);
+    const toRange = (span: { startLine: number; endLine: number }): vscode.Range =>
+      new vscode.Range(span.startLine - 1, 0, span.endLine - 1, 1_000_000);
+    const added = plan.added.map(toRange);
+    const removed = plan.removed.map(toRange);
     editor.setDecorations(this.addedType, added);
     editor.setDecorations(this.removedType, removed);
     this.lensChanged.fire();

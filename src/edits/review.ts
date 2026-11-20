@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { applyHunks } from './diff';
+import { layoutReview } from './reviewPlan';
 import { ProposalStore, applyText, readText, writeFile } from './proposals';
-import { appliedOf, languageFor, mapHunkLines, ReviewView } from './reviewView';
+import { languageFor, layoutOf, ReviewView } from './reviewView';
 import type { OpenReview, ReviewPort, ReviewResult } from './reviewView';
 
 export type { ReviewResult, ReviewPort };
@@ -63,7 +64,9 @@ export class ReviewController implements ReviewPort {
     if (current !== before) {
       throw new Error(`File ${proposal.path} changed since the proposal was built.`);
     }
-    await applyText(rootDir, proposal.path, newText, false);
+    // Stage a unified view: removed lines (red) above added lines (green).
+    const initial = layoutReview(before, proposal.hunks, new Set(), new Set());
+    await applyText(rootDir, proposal.path, initial.text, false);
     const uri = vscode.Uri.joinPath(vscode.Uri.file(rootDir), proposal.path);
     // Pinned tab: batch reviews must not replace each other in preview mode.
     const editor = await vscode.window.showTextDocument(uri, { preview: false });
@@ -85,11 +88,12 @@ export class ReviewController implements ReviewPort {
       this.reviews.set(key, review);
       void vscode.commands.executeCommand('setContext', 'forgePilot.reviewActive', true);
       this.view.refresh(editor);
-      const first = mapHunkLines(proposal.hunks, appliedOf(review)).get(
-        proposal.hunks[0]?.id ?? '',
-      );
+      const first = [...initial.spans.values()][0]?.start;
       if (first !== undefined) {
-        editor.revealRange(new vscode.Range(first - 1, 0, first - 1, 0));
+        editor.revealRange(
+          new vscode.Range(first - 1, 0, first - 1, 0),
+          vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+        );
       }
     });
   }
@@ -211,13 +215,13 @@ export class ReviewController implements ReviewPort {
     }
   }
 
-  /** Restage the buffer: full proposal minus rejected hunks. */
+  /** Restage the buffer: decided hunks collapse, undecided show both sides. */
   private async restage(rootDir: string, review: OpenReview): Promise<void> {
     const proposal = this.store.getProposal(review.runId, review.proposalId);
     if (!proposal) {
       return;
     }
-    const text = applyHunks(review.beforeText, proposal.hunks, appliedOf(review));
+    const text = layoutOf(review).text;
     const rel = vscode.workspace.asRelativePath(review.uri);
     await applyText(rootDir, rel, text, false);
     const editor = vscode.window.visibleTextEditors.find(
