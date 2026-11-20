@@ -84,6 +84,28 @@ describe('createEditHunks', () => {
     assert.equal(result.newText, 'x = bar(2)\n');
   });
 
+  it('reviews only the changed lines inside a generously quoted edit', () => {
+    const oldText = 'if x:\n    a()\n    b()\n    c()\n\ndone()\n';
+    const result = createEditHunks(oldText, [
+      {
+        old_text: 'if x:\n    a()\n    b()\n    c()',
+        new_text: 'if x:\n    a()\n    b()\n    c()\n    d()',
+      },
+    ]);
+    assert.ok(result);
+    assert.equal(result.hunks.length, 1);
+    assert.equal(result.hunks[0].startLine, 5);
+    assert.deepEqual(result.hunks[0].oldLines, []);
+    assert.deepEqual(result.hunks[0].newLines, ['    d()']);
+    assert.equal(result.newText, 'if x:\n    a()\n    b()\n    c()\n    d()\n\ndone()\n');
+  });
+
+  it('drops edits that change nothing', () => {
+    const result = createEditHunks('a\nb\n', [{ old_text: 'a', new_text: 'a' }]);
+    assert.ok(result);
+    assert.deepEqual(result.hunks, []);
+  });
+
   it('falls back to null on overlapping edits', () => {
     const result = createEditHunks('aaa\n', [
       { old_text: 'aaa', new_text: 'b' },

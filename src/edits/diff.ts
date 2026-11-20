@@ -188,7 +188,7 @@ export function createEditHunks(
       return null;
     }
   }
-  const hunks: Hunk[] = ordered.map((span, k) => {
+  const blocks: Hunk[] = ordered.map((span, k) => {
     const firstLine = lineOf(span.index);
     const lastLine = lineOf(span.index + Math.max(0, span.length - 1));
     const prefix = lines[firstLine].slice(0, Math.max(0, span.index - starts[firstLine]));
@@ -198,6 +198,21 @@ export function createEditHunks(
     const newLines = (prefix + span.edit.new_text + suffix).split('\n');
     return { id: `h${k + 1}`, startLine: firstLine + 1, oldLines, newLines };
   });
+  for (let i = 1; i < blocks.length; i++) {
+    if (blocks[i].startLine < blocks[i - 1].startLine + blocks[i - 1].oldLines.length) {
+      return null;
+    }
+  }
+  // Models quote generous context in old_text; review only the lines
+  // that actually change inside each edit, not the whole quoted block.
+  const hunks = blocks
+    .flatMap((block) =>
+      rowsToHunks(diffLines(block.oldLines, block.newLines)).map((inner) => ({
+        ...inner,
+        startLine: block.startLine + inner.startLine - 1,
+      })),
+    )
+    .map((hunk, k) => ({ ...hunk, id: `h${k + 1}` }));
   for (let i = 1; i < hunks.length; i++) {
     if (hunks[i].startLine < hunks[i - 1].startLine + hunks[i - 1].oldLines.length) {
       return null;
