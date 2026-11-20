@@ -40,10 +40,25 @@ api_key: <your-key-here>   # never commit keys; placeholders only
 Then launch the extension (`F5` in VS Code) and run
 **ForgePilot: Load Agent Definitions**.
 
+## Using ForgePilot
+
+- **Agent panel:** click the ForgePilot icon in the activity bar (or `Cmd/Ctrl+Alt+L`).
+  Each prompt shows a *Context picked* card (files, why each was chosen, token budget),
+  then the streamed reply, every tool the agent ran, and review outcomes. The header
+  shows the active model, configured fallbacks, and a link to the TrueForge session.
+  `Stop` (or `Cmd/Ctrl+Alt+Backspace`, or the status bar spinner) cancels the run and
+  rejects any open review.
+- **Inline edit:** select code (or put the cursor in a function) and press `Cmd/Ctrl+Alt+K`.
+- **Review:** proposed hunks are staged unsaved in the editor with green/red highlights.
+  Use the CodeLens buttons (`Accept hunk n/m`, `Reject`, `Accept all`, `Reject all`).
+  Nothing is written to disk until you decide. `Undo last` / `Undo run` restore files.
+
 ## Validate
 
 ```bash
-npm run validate
+npm run validate:offline   # typecheck, lint, build, unit tests (no TrueForge needed)
+npm run validate           # + live integration tests (needs TrueForge running)
+npm run preview:panel      # renders the panel (dark/light) to out/preview/*.png via headless Chrome
 ```
 
 ## How it works
