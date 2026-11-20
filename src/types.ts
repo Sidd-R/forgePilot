@@ -130,13 +130,16 @@ export type TurnStatus =
 /** Reduced transcript event rendered by the panel. */
 export interface TranscriptEvent {
   kind:
+    | 'user'
     | 'text'
     | 'tool_call'
     | 'tool_result'
     | 'approval'
     | 'subagent'
     | 'status'
-    | 'notice';
+    | 'notice'
+    | 'review'
+    | 'context';
   text: string;
   /** Wire event id; deltas merge into their base message by id. */
   id?: string;

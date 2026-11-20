@@ -19,7 +19,7 @@ export interface AgentTurnDeps {
   onTranscript: (event: TranscriptEvent) => void;
   onNotice: (message: string) => void;
   onSession?: (sessionId: string) => void;
-  onReviewComplete?: (runId: string, proposalId: string) => void;
+  onReviewComplete?: (runId: string, proposalId: string, accepted: number, rejected: number) => void;
   isCancelled: () => boolean;
   /** Continue this session instead of starting a resilient first turn. */
   sessionId?: string;
@@ -44,7 +44,8 @@ export async function runAgentTurn(deps: AgentTurnDeps): Promise<AgentTurnResult
     proposeDeps: deps.proposeDeps,
     askCommand: deps.askCommand,
     onTranscript: deps.onTranscript,
-    onReviewComplete: (runId, proposalId) => deps.onReviewComplete?.(runId, proposalId),
+    onReviewComplete: (runId, proposalId, accepted, rejected) =>
+      deps.onReviewComplete?.(runId, proposalId, accepted, rejected),
     isCancelled: deps.isCancelled,
   });
   const onEvent: TurnEventCallback = (event, cursor, info) => handler(event, cursor, info);

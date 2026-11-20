@@ -111,6 +111,17 @@ export class MessageBuffer {
     return this.messages.get(id);
   }
 
+  /** Find a tool call by id across every assembled message. */
+  findCall(toolCallId: string): ToolCallInfo | undefined {
+    for (const message of this.messages.values()) {
+      const call = toolCallFromMessage(message, toolCallId);
+      if (call) {
+        return call;
+      }
+    }
+    return undefined;
+  }
+
   /** Assembled texts in arrival order. */
   texts(): string[] {
     return [...this.messages.values()].map(messageText).filter((text) => text.length > 0);

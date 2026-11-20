@@ -1,4 +1,4 @@
-import type { TranscriptEvent } from '../types';
+import { APPROVAL_TOOLS, type TranscriptEvent } from '../types';
 import type { TrueForgeClient } from '../trueforge/client';
 import type { ApprovalRequest, TurnEventCallback } from '../trueforge/wire';
 import { approvalsOf } from '../trueforge/wire';
@@ -8,7 +8,10 @@ import {
   prepareProposals,
   type ProposeEditDeps,
 } from '../mcp/tools/propose_edit';
+import { describeTool } from '../panel/present';
 import { MessageBuffer, messageText, toolCallFromMessage } from './messages';
+
+const APPROVAL_TOOL_NAMES: ReadonlySet<string> = new Set(APPROVAL_TOOLS);
 
 export type CommandChoice = 'once' | 'session' | 'deny';
 
@@ -59,7 +62,18 @@ export function createTurnHandler(deps: TurnFlowDeps): TurnEventCallback {
       });
     }
     if (event.type === 'tool.response') {
-      deps.onTranscript?.({ kind: 'tool_result', text: 'tool finished' });
+      // Approval tools were already shown at their pause; surface the
+      // harness-run tools (reads, searches) with what they touched.
+      const callId = typeof event['tool_call_id'] === 'string' ? event['tool_call_id'] : '';
+      const call = messages.findCall(callId);
+      if (call && !APPROVAL_TOOL_NAMES.has(call.name)) {
+        deps.onTranscript?.({
+          kind: 'tool_call',
+          text: describeTool(call.name, call.args).detail,
+          tool: call.name,
+          resultBytes: messageText(event).length,
+        });
+      }
     }
     for (const approval of approvalsOf(event)) {
       if (deps.isCancelled()) {
@@ -72,7 +86,6 @@ export function createTurnHandler(deps: TurnFlowDeps): TurnEventCallback {
         await answer(info.sessionId, cursor.turnId, approval, false, 'Unknown tool call.');
         continue;
       }
-      deps.onTranscript?.({ kind: 'tool_call', text: call.name, tool: call.name });
       if (call.name === 'propose_edit') {
         await handleProposeEdit(deps, answer, info.sessionId, cursor.turnId, approval, call.args, () => {
           proposalCounter += 1;
@@ -106,21 +119,22 @@ async function handleProposeEdit(
     const staged = await prepareProposals(deps.proposeDeps, turnId, nextId, args);
     const paths = staged.map((entry) => entry.proposal.path).join(', ');
     deps.onTranscript?.({ kind: 'approval', text: `reviewing ${paths}` });
-    // One combined review: every file opens, the single approval answers
-    // once the user has decided everywhere.
+    // One combined review: every file opens in a pinned tab and the
+    // single approval answers once the user has decided everywhere.
     const results = await Promise.all(
-      staged.map((entry) => {
-        const started = deps.review.open(deps.rootDir, turnId, entry.proposal.id, entry.newText);
-        return started.then((result) => {
-          deps.onReviewComplete?.(
-            turnId,
-            entry.proposal.id,
-            result.accepted.length,
-            result.rejected.length,
-          );
-          return result;
-        });
-      }),
+      staged.map((entry) =>
+        deps.review
+          .open(deps.rootDir, turnId, entry.proposal.id, entry.newText)
+          .then((result) => {
+            deps.onReviewComplete?.(
+              turnId,
+              entry.proposal.id,
+              result.accepted.length,
+              result.rejected.length,
+            );
+            return result;
+          }),
+      ),
     );
     const accepted = results.reduce((sum, result) => sum + result.accepted.length, 0);
     await answer(
