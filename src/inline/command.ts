@@ -5,6 +5,20 @@ import { loadAgentFile } from '../trueforge/agents';
 import type { CodeIndex } from '../context/index';
 import { readText } from '../edits/proposals';
 import { runInlineEdit, type InlineTarget } from './controller';
+import { PendingMarker } from './marker';
+import { noticeLevel } from '../panel/present';
+
+function showNotice(message: string): void {
+  const level = noticeLevel(message);
+  const text = `ForgePilot: ${message}`;
+  if (level === 'error') {
+    void vscode.window.showErrorMessage(text);
+  } else if (level === 'warn') {
+    void vscode.window.showWarningMessage(text);
+  } else {
+    void vscode.window.showInformationMessage(text);
+  }
+}
 
 function captureTarget(editor: vscode.TextEditor, index: CodeIndex): InlineTarget | undefined {
   const doc = editor.document;
@@ -72,18 +86,35 @@ export async function runInlineCommand(host: Host): Promise<void> {
     void vscode.window.showErrorMessage('ForgePilot: set forgepilot.models.primary first.');
     return;
   }
+  const where = `${target.relPath}:${target.startLine}-${target.endLine}`;
   const instruction = await vscode.window.showInputBox({
-    title: 'ForgePilot Inline Edit',
-    prompt: 'Describe the edit',
+    title: `ForgePilot: edit ${where}`,
+    prompt: 'Describe the change. Only the selected lines are edited; you review every hunk before it is saved.',
+    placeHolder: 'e.g. handle empty input and update the docstring',
+    ignoreFocusOut: true,
   });
-  if (!instruction) {
+  if (!instruction?.trim()) {
     return;
   }
   host.cancelled = false;
   const spec = loadAgentFile(host.agentsDir, 'forgepilot-inline.yaml', host.config.primaryModel).manifest;
+  const marker = new PendingMarker(
+    editor,
+    new vscode.Range(target.startLine - 1, 0, target.endLine - 1, 0),
+  );
+  marker.set(`thinking with ${host.config.primaryModel}…`);
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'ForgePilot inline edit', cancellable: true },
-    async (_progress, token) => {
+    { location: vscode.ProgressLocation.Notification, title: `ForgePilot · ${where}`, cancellable: true },
+    async (progress, token) => {
+      progress.report({ message: 'Thinking…' });
+      // Hand the editor over to the diff colors once a proposal arrives.
+      const review = {
+        open: (rootDir: string, runId: string, proposalId: string, newText: string) => {
+          marker.dispose();
+          progress.report({ message: 'Review the hunks in the editor (Accept / Reject above each change).' });
+          return host.review.open(rootDir, runId, proposalId, newText);
+        },
+      };
       token.onCancellationRequested(() => {
         host.cancelled = true;
         // Resolve any open review first: with the silence timer disarmed
@@ -103,11 +134,15 @@ export async function runInlineCommand(host: Host): Promise<void> {
           target,
           instruction,
           store: host.store,
-          review: host.review,
+          review,
           proposeDeps: host.proposeDeps,
           readFullText: () => readText(host.rootDir, target.relPath),
           diagnostics: (rel) => collectDiagnostics(rel),
-          onNotice: (message) => void vscode.window.showInformationMessage(`ForgePilot: ${message}`),
+          onNotice: (message) => {
+            progress.report({ message });
+            marker.set(noticeLevel(message) === 'warn' ? 'retrying with fallback model…' : 'working…');
+            showNotice(message);
+          },
           onSession: (sessionId) => {
             host.activeSession = sessionId;
           },
@@ -117,17 +152,27 @@ export async function runInlineCommand(host: Host): Promise<void> {
           isCancelled: () => host.cancelled,
         });
       } catch (err) {
+        marker.dispose();
         host.activeSession = undefined;
         void vscode.window.showErrorMessage(
           `ForgePilot inline edit failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         return;
       }
+      marker.dispose();
       host.activeSession = undefined;
       if (outcome === 'applied') {
-        void vscode.window.showInformationMessage('ForgePilot: edit applied.');
+        void vscode.window
+          .showInformationMessage(`ForgePilot: edit applied to ${where}.`, 'Undo')
+          .then((choice) => {
+            if (choice === 'Undo') {
+              void vscode.commands.executeCommand('forgePilot.undoLast');
+            }
+          });
+      } else if (outcome === 'rejected') {
+        void vscode.window.showInformationMessage('ForgePilot: all hunks rejected; the file is unchanged.');
       } else if (outcome === 'cancelled') {
-        void vscode.window.showInformationMessage('ForgePilot: cancelled.');
+        void vscode.window.showInformationMessage('ForgePilot: cancelled; the file is unchanged.');
       }
     },
   );
