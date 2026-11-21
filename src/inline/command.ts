@@ -6,8 +6,12 @@ import type { CodeIndex } from '../context/index';
 import { readText } from '../edits/proposals';
 import { runInlineEdit, type InlineTarget } from './controller';
 import { LiveStatus, PendingMarker } from './marker';
+import { resolveTargetLines } from './target';
 import { formatUsage } from '../flows/usage';
 import { noticeLevel } from '../panel/present';
+
+/** How long the inline result stays on screen after the review ends. */
+const RESULT_VISIBLE_MS = 15_000;
 
 function showNotice(message: string): void {
   const level = noticeLevel(message);
@@ -25,30 +29,27 @@ function captureTarget(editor: vscode.TextEditor, index: CodeIndex): InlineTarge
   const doc = editor.document;
   const relPath = vscode.workspace.asRelativePath(doc.uri);
   const sel = editor.selection;
-  let startLine: number;
-  let endLine: number;
-  let selectedText: string;
-  if (!sel.isEmpty) {
-    startLine = sel.start.line + 1;
-    endLine = sel.end.line + 1;
-    selectedText = doc.getText(sel);
-  } else {
-    const line = sel.active.line + 1;
-    const chunk = index.chunks.find(
-      (c) => c.path === relPath && c.startLine <= line && line <= c.endLine && c.symbol,
-    );
-    if (!chunk) {
-      return undefined;
-    }
-    startLine = chunk.startLine;
-    endLine = chunk.endLine;
-    const range = new vscode.Range(
-      startLine - 1,
-      0,
-      endLine - 1,
-      doc.lineAt(endLine - 1).text.length,
-    );
-    selectedText = doc.getText(range);
+  // A selection ending at column 0 of the next line ends on the line above.
+  const lastLine = !sel.isEmpty && sel.end.character === 0 && sel.end.line > sel.start.line
+    ? sel.end.line
+    : sel.end.line + 1;
+  const lineText = doc.lineAt(sel.start.line).text;
+  const lines = resolveTargetLines(
+    {
+      startLine: sel.start.line + 1,
+      endLine: lastLine,
+      empty: sel.isEmpty,
+      partial: sel.start.line === sel.end.line && doc.getText(sel).trim() !== lineText.trim(),
+    },
+    index.chunks.filter((c) => c.path === relPath),
+  );
+  if (!lines) {
+    return undefined;
+  }
+  const { startLine, endLine } = lines;
+  const range = new vscode.Range(startLine - 1, 0, endLine - 1, doc.lineAt(endLine - 1).text.length);
+  const selectedText = doc.getText(range);
+  if (lines.expandedTo) {
     editor.selection = new vscode.Selection(range.start, range.end);
   }
   const beforeStart = Math.max(0, startLine - 1 - 40);
@@ -103,86 +104,119 @@ export async function runInlineCommand(host: Host): Promise<void> {
     editor,
     new vscode.Range(target.startLine - 1, 0, target.endLine - 1, 0),
   );
-  await vscode.window.withProgress(
+  // The command (and its busy lock) ends with the run; the notification
+  // may stay open afterwards to show the result.
+  let release = (): void => undefined;
+  const runEnded = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  void vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `ForgePilot · ${where}`, cancellable: true },
     async (progress, token) => {
-      const status = new LiveStatus(progress, marker);
-      let tokens = '';
-      status.update(`Thinking with ${host.config.primaryModel}…`);
-      // Hand the editor over to the diff colors once a proposal arrives.
-      const review = {
-        open: (rootDir: string, runId: string, proposalId: string, newText: string) => {
-          status.pause('Review the hunks in the editor (Accept / Reject above each change).');
-          marker.dispose();
-          return host.review.open(rootDir, runId, proposalId, newText);
-        },
-      };
-      token.onCancellationRequested(() => {
-        host.cancelled = true;
-        // Resolve any open review first: with the silence timer disarmed
-        // while paused, a pending review would wedge the loader forever,
-        // and its lenses and colors would haunt the editor.
-        void host.review.closeAllAsRejectAll(host.rootDir);
-        if (host.activeSession) {
-          void host.client.cancel(host.activeSession).catch(() => undefined);
-        }
-      });
-      let outcome: string;
       try {
-        outcome = await runInlineEdit({
-          client: host.client,
-          spec,
-          models: [host.config.primaryModel, ...host.config.fallbackModels],
-          target,
-          instruction,
-          store: host.store,
-          review,
-          proposeDeps: host.proposeDeps,
-          readFullText: () => readText(host.rootDir, target.relPath),
-          diagnostics: (rel) => collectDiagnostics(rel),
-          onNotice: (message) => {
-            status.update(noticeLevel(message) === 'warn' ? 'Primary model failed; trying the fallback model…' : message);
-            showNotice(message);
-          },
-          onActivity: (text) => status.update(text),
-          onUsage: (usage) => {
-            tokens = formatUsage(usage);
-            status.usage(tokens);
-          },
-          onSession: (sessionId) => {
-            host.activeSession = sessionId;
-          },
-          onReviewComplete: (runId) => {
-            host.lastRunId = runId;
-          },
-          isCancelled: () => host.cancelled,
-        });
-      } catch (err) {
-        status.stop();
-        marker.dispose();
-        host.activeSession = undefined;
-        void vscode.window.showErrorMessage(
-          `ForgePilot inline edit failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return;
-      }
-      status.stop();
-      marker.dispose();
-      host.activeSession = undefined;
-      const spent = tokens ? ` Tokens: ${tokens}.` : '';
-      if (outcome === 'applied') {
-        void vscode.window
-          .showInformationMessage(`ForgePilot: edit applied to ${where}.${spent}`, 'Undo')
-          .then((choice) => {
-            if (choice === 'Undo') {
-              void vscode.commands.executeCommand('forgePilot.undoLast');
-            }
-          });
-      } else if (outcome === 'rejected') {
-        void vscode.window.showInformationMessage(`ForgePilot: all hunks rejected; the file is unchanged.${spent}`);
-      } else if (outcome === 'cancelled') {
-        void vscode.window.showInformationMessage(`ForgePilot: cancelled; the file is unchanged.${spent}`);
+        await inlineRun(progress, token, target, instruction);
+      } finally {
+        release();
       }
     },
   );
+  await runEnded;
+
+  async function inlineRun(
+    progress: vscode.Progress<{ message?: string }>,
+    token: vscode.CancellationToken,
+    target: InlineTarget,
+    instruction: string,
+  ): Promise<void> {
+    const status = new LiveStatus(progress, marker);
+    let tokens = '';
+    status.update(`Thinking with ${host.config.primaryModel}…`);
+    // Hand the editor over to the diff colors once a proposal arrives.
+    const review = {
+      open: (rootDir: string, runId: string, proposalId: string, newText: string) => {
+        status.pause('Review the hunks in the editor (Accept / Reject above each change).');
+        marker.dispose();
+        return host.review.open(rootDir, runId, proposalId, newText);
+      },
+    };
+    let finished = false;
+    let dismiss = (): void => undefined;
+    token.onCancellationRequested(() => {
+      if (finished) {
+        dismiss(); // Closing the result notification early.
+        return;
+      }
+      host.cancelled = true;
+      // Resolve any open review first: with the silence timer disarmed
+      // while paused, a pending review would wedge the loader forever,
+      // and its lenses and colors would haunt the editor.
+      void host.review.closeAllAsRejectAll(host.rootDir);
+      if (host.activeSession) {
+        void host.client.cancel(host.activeSession).catch(() => undefined);
+      }
+    });
+    let outcome: string;
+    try {
+      outcome = await runInlineEdit({
+        client: host.client,
+        spec,
+        models: [host.config.primaryModel, ...host.config.fallbackModels],
+        target,
+        instruction,
+        store: host.store,
+        review,
+        proposeDeps: host.proposeDeps,
+        readFullText: () => readText(host.rootDir, target.relPath),
+        diagnostics: (rel) => collectDiagnostics(rel),
+        onNotice: (message) => {
+          status.update(noticeLevel(message) === 'warn' ? 'Primary model failed; trying the fallback model…' : message);
+          showNotice(message);
+        },
+        onActivity: (text) => status.update(text),
+        onUsage: (usage) => {
+          tokens = formatUsage(usage);
+          status.usage(tokens);
+        },
+        onSession: (sessionId) => {
+          host.activeSession = sessionId;
+        },
+        onReviewComplete: (runId) => {
+          host.lastRunId = runId;
+        },
+        isCancelled: () => host.cancelled,
+      });
+    } catch (err) {
+      status.stop();
+      marker.dispose();
+      host.activeSession = undefined;
+      void vscode.window.showErrorMessage(
+        `ForgePilot inline edit failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    status.stop();
+    marker.dispose();
+    host.activeSession = undefined;
+    const spent = tokens ? `  ·  ${tokens} tokens` : '';
+    const result: Record<string, string> = {
+      applied: `✓ Edit applied to ${where}. Undo: ForgePilot: Undo Last Change.${spent}`,
+      rejected: `All hunks rejected; the file is unchanged.${spent}`,
+      cancelled: `Cancelled; the file is unchanged.${spent}`,
+    };
+    const message = result[outcome];
+    if (!message) {
+      return;
+    }
+    // Keep the result visible: plain notifications hide on VS Code's own timer.
+    finished = true;
+    progress.report({ message });
+    release();
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, RESULT_VISIBLE_MS);
+      dismiss = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  }
 }
