@@ -112,9 +112,12 @@ export class TrueForgeClient {
 
   /**
    * New session. With `agentName`, the registry agent of that name is
-   * first brought up to date with `spec`, and the session references it,
-   * so TrueForge lists the session under that agent. Otherwise (fallback
-   * models, or if the registry is unavailable) the spec is sent inline.
+   * first brought up to date with `spec` (including a fallback model),
+   * and the session references it, so TrueForge lists the session under
+   * that agent. TrueForge reads a referenced agent on every turn, which
+   * is safe here because ForgePilot runs one turn at a time and each run
+   * re-syncs before it starts. Without a registry agent the spec is sent
+   * inline.
    */
   async createSession(spec: WireAgentSpec, agentName?: string): Promise<string> {
     const agent = agentName ? await this.syncRegistryAgent(agentName, spec).catch(() => false) : false;

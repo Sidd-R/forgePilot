@@ -11,7 +11,7 @@ import { createTurnHandler, type CommandChoice } from './turns';
 export interface AgentTurnDeps {
   client: TrueForgeClient;
   spec: WireAgentSpec;
-  /** Registry agent that primary-model sessions are linked to. */
+  /** Registry agent every session of this run is linked to. */
   agentName?: string;
   models: string[];
   input: string;
@@ -73,10 +73,7 @@ export async function runAgentTurn(deps: AgentTurnDeps): Promise<AgentTurnResult
     }
   }
   const turnDeps: TurnDeps = {
-    // Primary-model sessions are linked to the registry agent; fallback
-    // models differ from it, so their sessions carry the spec inline.
-    createSession: (spec) =>
-      deps.client.createSession(spec, spec.model.name === deps.models[0] ? deps.agentName : undefined),
+    createSession: (spec) => deps.client.createSession(spec, deps.agentName),
     streamTurn: (sessionId, input, handlerFn, opts) =>
       deps.client.streamTurn(sessionId, input, handlerFn, opts),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
