@@ -5,6 +5,7 @@ import type { TurnEventCallback, WireAgentSpec } from '../trueforge/wire';
 import type { ProposalStore } from '../edits/proposals';
 import type { ReviewPort } from '../edits/review';
 import type { ProposeEditDeps } from '../mcp/tools/propose_edit';
+import { UsageMeter, type TokenUsage } from './usage';
 import { createTurnHandler, type CommandChoice } from './turns';
 
 export interface AgentTurnDeps {
@@ -20,6 +21,8 @@ export interface AgentTurnDeps {
   onNotice: (message: string) => void;
   onSession?: (sessionId: string) => void;
   onReviewComplete?: (runId: string, proposalId: string, accepted: number, rejected: number) => void;
+  /** Running token totals for this turn (all model calls, incl. fallbacks). */
+  onUsage?: (usage: TokenUsage) => void;
   isCancelled: () => boolean;
   /** Continue this session instead of starting a resilient first turn. */
   sessionId?: string;
@@ -48,7 +51,13 @@ export async function runAgentTurn(deps: AgentTurnDeps): Promise<AgentTurnResult
       deps.onReviewComplete?.(runId, proposalId, accepted, rejected),
     isCancelled: deps.isCancelled,
   });
-  const onEvent: TurnEventCallback = (event, cursor, info) => handler(event, cursor, info);
+  const meter = new UsageMeter();
+  const onEvent: TurnEventCallback = (event, cursor, info) => {
+    if (meter.feed(event)) {
+      deps.onUsage?.(meter.total());
+    }
+    return handler(event, cursor, info);
+  };
 
   if (deps.sessionId) {
     try {

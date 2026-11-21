@@ -31,6 +31,7 @@ export function panelMarkup(scriptSrc: string, nonce: string): string {
     <button class="link-btn" id="undoRun" title="Restore every file changed in the last run" disabled>Undo run</button>
     <button id="send">Send</button>
   </div>
+  <div id="usage" title="Token usage reported by TrueForge for each model call"></div>
 </div>
 <div id="overlay"></div>
 <script nonce="${nonce}" src="${scriptSrc}"></script>

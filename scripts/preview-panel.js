@@ -44,6 +44,7 @@ const FIXTURES = {
   run: [
     { type: 'meta', model: 'muse/muse-spark-1-3-contributor', fallbacks: ['muse/muse-spark-1-3'], sessionUrl: 'http://localhost:8790/sessions/x', canUndo: true },
     { type: 'runState', running: true, startedAt: Date.now() - 74000 },
+    { type: 'usage', run: '48.2k in (31.0k cached) · 2.1k out', chat: '61.9k in (31.0k cached) · 2.6k out', calls: 9 },
     { type: 'transcriptBatch', events: [{ kind: 'user', text: 'Add a new built-in CLI command flask config that prints the loaded application\'s configuration as JSON, masking secrets.' }] },
     { type: 'transcriptBatch', events: [
       { kind: 'context', text: JSON.stringify(pack) },

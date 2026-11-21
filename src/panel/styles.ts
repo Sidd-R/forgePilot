@@ -77,6 +77,10 @@ a:hover { text-decoration: underline; }
 .hint { min-width: 0; color: var(--muted); font-size: 11px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-btn { background: none; border: none; color: var(--vscode-textLink-foreground); padding: 2px 4px; }
 .link-btn:hover:not(:disabled) { text-decoration: underline; }
+#usage { display: none; margin-top: 6px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; column-gap: 14px; row-gap: 2px; flex-wrap: wrap; }
+#usage.show { display: flex; }
+#usage span { white-space: nowrap; }
+#usage b { font-weight: 600; color: var(--vscode-foreground); }
 #send { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 3px; padding: 4px 14px; }
 #send:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
 #send.stop { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }

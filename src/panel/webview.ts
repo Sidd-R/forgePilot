@@ -49,6 +49,9 @@ interface Inbound {
   fallbacks?: string[];
   sessionUrl?: string;
   canUndo?: boolean;
+  run?: string;
+  chat?: string;
+  calls?: number;
 }
 
 /** Stick to the bottom only when the user has not scrolled up to read. */
@@ -164,6 +167,27 @@ function openHistoryTranscript(events: ToolTranscriptItem[]): void {
   }
 }
 
+function renderUsage(run: string, chat: string, calls: number): void {
+  const usage = el('usage');
+  usage.textContent = '';
+  usage.classList.toggle('show', Boolean(run || chat));
+  const part = (label: string, value: string): void => {
+    if (!value) {
+      return;
+    }
+    const item = document.createElement('span');
+    const strong = document.createElement('b');
+    strong.textContent = label;
+    item.append(strong, ` ${value}`);
+    usage.append(item);
+  };
+  part(running ? 'This run' : 'Last run', run);
+  if (chat && chat !== run) {
+    part('Chat', chat);
+  }
+  usage.title = `Token usage reported by TrueForge · ${calls} model call${calls === 1 ? '' : 's'} in this chat`;
+}
+
 // ---- host messages ----
 window.addEventListener('message', (event: MessageEvent<Inbound>) => {
   const message = event.data;
@@ -195,6 +219,8 @@ window.addEventListener('message', (event: MessageEvent<Inbound>) => {
     for (const button of undoButtons) {
       button.disabled = !message.canUndo;
     }
+  } else if (message.type === 'usage') {
+    renderUsage(message.run ?? '', message.chat ?? '', message.calls ?? 0);
   } else if (message.type === 'mentionResults') {
     if (message.id === queryId) {
       completion.show((message.items ?? []) as string[]);

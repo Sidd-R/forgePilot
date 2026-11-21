@@ -15,6 +15,7 @@ import {
 import { panelHtml } from './view';
 import { ChatHistory, type ChatStorage } from './history';
 import { sessionUrl } from './present';
+import { addUsage, formatUsage, ZERO_USAGE, type TokenUsage } from '../flows/usage';
 import { setBusy, type Host } from '../host';
 
 /** Agent panel: prompt box, context card, streamed transcript, run controls. */
@@ -24,6 +25,8 @@ export class PanelHost implements vscode.WebviewViewProvider {
   private running = false;
   private startedAt = 0;
   private model = '';
+  private runUsage: TokenUsage = ZERO_USAGE;
+  private chatUsage: TokenUsage = ZERO_USAGE;
   private queue: TranscriptEvent[] = [];
   private flushTimer: ReturnType<typeof setInterval> | undefined;
   private readonly history: ChatHistory;
@@ -65,6 +68,16 @@ export class PanelHost implements vscode.WebviewViewProvider {
       sessionUrl: this.sessionId ? sessionUrl(this.host.config.baseUrl, this.sessionId) : '',
       canUndo: this.host.lastRunId !== undefined,
     });
+    this.postUsage();
+  }
+
+  private postUsage(): void {
+    const chat = addUsage(this.chatUsage, this.running ? this.runUsage : ZERO_USAGE);
+    this.post('usage', {
+      run: this.runUsage.calls > 0 ? formatUsage(this.runUsage) : '',
+      chat: chat.calls > 0 ? formatUsage(chat) : '',
+      calls: chat.calls,
+    });
   }
 
   newChat(): void {
@@ -75,6 +88,8 @@ export class PanelHost implements vscode.WebviewViewProvider {
     this.history.finalize();
     this.sessionId = undefined;
     this.model = '';
+    this.runUsage = ZERO_USAGE;
+    this.chatUsage = ZERO_USAGE;
     this.post('cleared');
     this.refreshMeta();
   }
@@ -176,6 +191,7 @@ export class PanelHost implements vscode.WebviewViewProvider {
     setBusy(this.host, true);
     this.host.cancelled = false;
     this.startedAt = Date.now();
+    this.runUsage = ZERO_USAGE;
     this.postRunState();
     this.history.beginPrompt(prompt);
     this.pushTranscript({ kind: 'user', text: prompt });
@@ -220,6 +236,10 @@ export class PanelHost implements vscode.WebviewViewProvider {
           });
           this.refreshMeta();
         },
+        onUsage: (usage) => {
+          this.runUsage = usage;
+          this.postUsage();
+        },
         isCancelled: () => this.host.cancelled,
         sessionId: this.sessionId,
       });
@@ -240,6 +260,7 @@ export class PanelHost implements vscode.WebviewViewProvider {
       clearInterval(this.flushTimer);
       this.flushTimer = undefined;
       this.flush();
+      this.chatUsage = addUsage(this.chatUsage, this.runUsage);
       this.running = false;
       setBusy(this.host, false);
       this.host.activeSession = undefined;
