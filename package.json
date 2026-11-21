@@ -39,7 +39,8 @@
     "validate": "npm run typecheck && npm run lint && npm run build && npm run test:unit && npm run test:integration",
     "vscode:prepublish": "npm run build",
     "preview:panel": "tsc && node esbuild.js && node scripts/preview-panel.js",
-    "validate:offline": "npm run typecheck && npm run lint && npm run build && npm run test:unit"
+    "validate:offline": "npm run typecheck && npm run lint && npm run build && npm run test:unit",
+    "watch": "node esbuild.js --watch"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
@@ -61,7 +62,7 @@
     "commands": [
       {
         "command": "forgePilot.inlineEdit",
-        "title": "ForgePilot: Inline Edit\u2026",
+        "title": "ForgePilot: Inline Edit…",
         "icon": "$(sparkle)"
       },
       {
