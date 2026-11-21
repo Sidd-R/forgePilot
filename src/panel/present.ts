@@ -167,6 +167,8 @@ export interface ReviewedFile {
   rejected: number;
   /** First accepted hunk's line (1-based) in the original file. */
   line: number;
+  /** The agent's reason for changing this file. */
+  why?: string;
 }
 
 /**
@@ -183,6 +185,9 @@ export function summarizeChanges(reviews: ReviewedFile[]): ReviewedFile[] {
     }
     if (seen.accepted === 0 && review.accepted > 0) {
       seen.line = review.line;
+    }
+    if (review.why && (review.accepted > 0 || !seen.why)) {
+      seen.why = review.why;
     }
     seen.accepted += review.accepted;
     seen.rejected += review.rejected;

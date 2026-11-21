@@ -16,7 +16,10 @@ const fileEditSchema = z.object({
     .optional()
     .describe('Search-and-replace blocks. Omit when content is used.'),
   content: z.string().optional().describe('Whole-file content for new or small files.'),
-  explanation: z.string().optional().describe('Why this file changes.'),
+  explanation: z
+    .string()
+    .optional()
+    .describe('Always set: one sentence on which part of the request this file change serves. Shown to the user during review.'),
 });
 
 export type FileEditArgs = z.infer<typeof fileEditSchema>;
@@ -28,7 +31,10 @@ export const proposeEditSchema = z.object({
     .optional()
     .describe('Search-and-replace blocks. Omit when content is used.'),
   content: z.string().optional().describe('Whole-file content for new or small files.'),
-  explanation: z.string().optional().describe('Why this change is needed.'),
+  explanation: z
+    .string()
+    .optional()
+    .describe('Always set: one sentence on which part of the request this change serves. Shown to the user during review.'),
   files: z
     .array(fileEditSchema)
     .optional()

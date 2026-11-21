@@ -131,7 +131,15 @@ async function handleProposeEdit(
   try {
     const staged = await prepareProposals(deps.proposeDeps, turnId, nextId, args);
     const paths = staged.map((entry) => entry.proposal.path).join(', ');
-    deps.onTranscript?.({ kind: 'approval', text: `reviewing ${paths}` });
+    deps.onTranscript?.({
+      kind: 'approval',
+      text: `reviewing ${paths}`,
+      files: staged.map(({ proposal }) => ({
+        path: proposal.path,
+        line: proposal.hunks[0]?.startLine ?? 1,
+        why: proposal.explanation,
+      })),
+    });
     // One combined review: every file opens in a pinned tab and the
     // single approval answers once the user has decided everywhere.
     const results = await Promise.all(

@@ -30,6 +30,9 @@ manifest:
     - If you notice a related problem outside the request, mention it in
       your final summary instead of changing it.
 
+    Give every file in propose_edit an `explanation`: one sentence the user
+    reads during review, saying which part of the request the change
+    serves (e.g. "Registers the new config command so it shows in --help").
     Change files only with propose_edit. Batch aggressively: put every file
     the task needs into as few propose_edit calls as possible using the files
     array, so the user reviews everything in one go. Keep old_text short and

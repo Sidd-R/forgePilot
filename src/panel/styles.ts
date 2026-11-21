@@ -44,6 +44,10 @@ a:hover { text-decoration: underline; }
 .msg-tool .icon, .msg-tool .name { flex: none; white-space: nowrap; }
 .msg-subagent { flex-wrap: wrap; }
 .msg-subagent .name { font-weight: 600; }
+.msg-tool .badge { flex: none; font-family: var(--vscode-font-family); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 0 5px; border-radius: 3px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.file-list { margin-top: 4px; display: flex; flex-direction: column; gap: 3px; }
+.file-link { font-family: var(--vscode-editor-font-family); }
+.file-why { color: var(--muted); font-size: 11px; margin-left: 12px; }
 .msg-tool.msg-subagent .detail { flex-basis: 100%; margin-left: 20px; white-space: normal; font-family: var(--vscode-font-family); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .card.subagent-result { border-color: var(--vscode-focusBorder); }
 .card.subagent-result.failed { border-color: var(--vscode-errorForeground); }

@@ -89,6 +89,15 @@ describe('formatting', () => {
 });
 
 describe('summarizeChanges', () => {
+  it('keeps the reason from the accepted review', () => {
+    const [file] = summarizeChanges([
+      { path: 'a.py', accepted: 0, rejected: 1, line: 1, why: 'first try' },
+      { path: 'a.py', accepted: 1, rejected: 0, line: 5, why: 'adds the command' },
+      { path: 'a.py', accepted: 0, rejected: 1, line: 1 },
+    ]);
+    assert.equal(file?.why, 'adds the command');
+  });
+
   it('merges repeated reviews per file and lists changed files first', () => {
     const files = summarizeChanges([
       { path: 'docs/cli.rst', accepted: 0, rejected: 1, line: 1 },

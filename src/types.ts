@@ -150,8 +150,18 @@ export interface TranscriptEvent {
   tool?: string;
   /** Set on tool rows run by a subagent: that subagent's name. */
   by?: string;
+  /** Files an approval or review line refers to, with the agent's reason. */
+  files?: FileRef[];
   durationMs?: number;
   resultBytes?: number;
+}
+
+/** A clickable file in the transcript and why the agent changes it. */
+export interface FileRef {
+  path: string;
+  /** 1-based line to reveal. */
+  line?: number;
+  why?: string;
 }
 
 /** One ranked chunk inside a context pack. */

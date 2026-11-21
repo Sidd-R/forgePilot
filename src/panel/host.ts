@@ -234,10 +234,13 @@ export class PanelHost implements vscode.WebviewViewProvider {
           const proposal = this.host.store.getProposal(runId, proposalId);
           const path = proposal?.path ?? proposalId;
           const firstAccepted = proposal?.hunks.find((h) => h.decision === 'accepted');
-          reviewed.push({ path, accepted, rejected, line: firstAccepted?.startLine ?? 1 });
+          const line = firstAccepted?.startLine ?? 1;
+          const why = proposal?.explanation;
+          reviewed.push({ path, accepted, rejected, line, why });
           this.pushTranscript({
             kind: 'review',
             text: `${path}: ${accepted} accepted, ${rejected} rejected`,
+            files: [{ path, line, why }],
           });
           this.refreshMeta();
         },

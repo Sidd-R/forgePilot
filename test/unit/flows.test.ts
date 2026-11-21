@@ -1,3 +1,4 @@
+import type { TranscriptEvent } from '../../src/types';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -115,7 +116,9 @@ describe('batched review orchestration', () => {
     const store = new ProposalStore();
     const opened: string[] = [];
     const answers: boolean[] = [];
+    const transcript: TranscriptEvent[] = [];
     const handler = createTurnHandler({
+      onTranscript: (event) => transcript.push(event),
       client: {
         answerApproval: (_s: string, _t: string, _a: never, allow: boolean) => {
           answers.push(allow);
@@ -150,7 +153,7 @@ describe('batched review orchestration', () => {
     });
     const args = {
       files: [
-        { path: 'a.py', edits: [{ old_text: 'a = 1', new_text: 'a = 10' }] },
+        { path: 'a.py', edits: [{ old_text: 'a = 1', new_text: 'a = 10' }], explanation: 'raise a' },
         { path: 'b.py', edits: [{ old_text: 'b = 2', new_text: 'b = 20' }] },
       ],
     };
@@ -178,6 +181,11 @@ describe('batched review orchestration', () => {
     );
     assert.deepEqual(opened.length, 2);
     assert.deepEqual(answers, [true]);
+    const approval = transcript.find((e) => e.kind === 'approval');
+    assert.deepEqual(approval?.files, [
+      { path: 'a.py', line: 1, why: 'raise a' },
+      { path: 'b.py', line: 1, why: undefined },
+    ]);
     const outcome = await applyPreparedProposal(
       {
         rootDir: root,

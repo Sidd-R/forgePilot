@@ -1,5 +1,6 @@
 // DOM renderers for the agent panel: transcript lines and the context card.
 import { TranscriptStore, type TranscriptItem } from './transcript';
+import type { FileRef } from '../types';
 import { renderMarkdown } from './markdown';
 import { groupPack, noticeLevel, type PackRow, type ReviewedFile } from './present';
 
@@ -7,6 +8,7 @@ export interface ToolTranscriptItem extends TranscriptItem {
   tool?: string;
   /** Subagent that ran this tool, when not the main agent. */
   by?: string;
+  files?: FileRef[];
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -43,14 +45,43 @@ function span(className: string, text: string): HTMLSpanElement {
   return node;
 }
 
+function fileLink(file: FileRef, onOpen: OpenFile): HTMLAnchorElement {
+  const link = document.createElement('a');
+  link.className = 'file-link';
+  link.textContent = file.path;
+  link.title = `Open ${file.path}`;
+  link.addEventListener('click', () => onOpen(file.path, file.line ?? 1));
+  return link;
+}
+
+/** Clickable file rows, each with the agent's reason underneath. */
+function fileList(files: FileRef[], onOpen: OpenFile): HTMLElement {
+  const list = div('file-list');
+  for (const file of files) {
+    const row = div('file-row');
+    row.appendChild(fileLink(file, onOpen));
+    if (file.why) {
+      row.appendChild(div('file-why', file.why));
+    }
+    list.appendChild(row);
+  }
+  return list;
+}
+
 /** Build the element for a non-streaming line; text lines are filled by the caller. */
-function buildLine(kind: string, text: string, tool?: string, by?: string): HTMLElement {
+function buildLine(item: ToolTranscriptItem, kind: string, text: string, onOpen: OpenFile): HTMLElement {
+  const { tool, by, files } = item;
   switch (kind) {
     case 'user':
       return div('msg msg-user', text);
     case 'subagent': {
       const row = div('msg msg-tool msg-subagent');
-      row.append(span('icon', '🤖'), span('name', `${tool ?? 'subagent'} started`), span('detail', text));
+      row.append(
+        span('icon', '🤖'),
+        span('badge', 'Subagent'),
+        span('name', `${tool ?? 'subagent'} started`),
+        span('detail', text),
+      );
       row.title = `Subagent ${tool ?? ''}: ${text}`;
       return row;
     }
@@ -63,6 +94,14 @@ function buildLine(kind: string, text: string, tool?: string, by?: string): HTML
     }
     case 'approval': {
       const isCommand = text.startsWith('command:');
+      if (!isCommand && files && files.length > 0) {
+        const box = div('msg msg-approval');
+        box.append(
+          div('', `⏸ Review ${files.length} file${files.length === 1 ? '' : 's'} — use the Accept / Reject lenses in the editor:`),
+          fileList(files, onOpen),
+        );
+        return box;
+      }
       return div(
         'msg msg-approval',
         isCommand
@@ -73,7 +112,13 @@ function buildLine(kind: string, text: string, tool?: string, by?: string): HTML
     case 'review': {
       const accepted = /: (\d+) accepted/.exec(text);
       const ok = accepted !== null && Number(accepted[1]) > 0;
-      return div(`msg msg-review ${ok ? 'ok' : 'none'}`, `${ok ? '✓' : '✕'} ${text}`);
+      const file = files?.[0];
+      if (!file) {
+        return div(`msg msg-review ${ok ? 'ok' : 'none'}`, `${ok ? '✓' : '✕'} ${text}`);
+      }
+      const row = div(`msg msg-review ${ok ? 'ok' : 'none'}`, `${ok ? '✓' : '✕'} `);
+      row.append(fileLink(file, onOpen), text.slice(file.path.length));
+      return row;
     }
     case 'notice':
       return div(`msg msg-notice ${noticeLevel(text)}`, text);
@@ -119,7 +164,7 @@ export function createRenderer(container: HTMLElement, onOpen: OpenFile): {
       }
       const line = store.append(item);
       if (line.kind !== 'text') {
-        container.appendChild(buildLine(line.kind, line.text, item.tool, item.by));
+        container.appendChild(buildLine(item, line.kind, line.text, onOpen));
         return;
       }
       let node = textNodes.get(line.key);
@@ -217,6 +262,11 @@ export function buildChangesCard(files: ReviewedFile[], onOpen: OpenFile): HTMLE
       : 'all rejected';
     top.append(span('ctx-rank', file.accepted > 0 ? '✓' : '✕'), link, span('ctx-tokens', counts));
     row.appendChild(top);
+    if (file.why) {
+      const why = div('ctx-reason', file.why);
+      why.title = file.why;
+      row.appendChild(why);
+    }
     rows.appendChild(row);
   }
   card.append(summary, rows);
@@ -248,7 +298,7 @@ export function buildSubagentCard(name: string, text: string): HTMLElement {
   card.open = true;
   const head = document.createElement('summary');
   head.append(
-    span('title', `🤖 ${name} ${status === 'done' ? 'finished' : status}`),
+    span('title', `🤖 Subagent ${name} ${status === 'done' ? 'finished' : status}`),
     span('budget', 'subagent result'),
   );
   const body = div('msg-text sub-body');
