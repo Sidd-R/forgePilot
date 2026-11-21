@@ -168,6 +168,12 @@ describe('task B: agent mode end to end', { timeout: 900_000 }, () => {
       const status = execSync(`git -C ${workdir} status --short`, { encoding: 'utf8' });
       const changed = status.trim().split('\n').filter(Boolean);
       assert.ok(changed.length >= 3, `expected 3+ files, got:\n${status}`);
+      // Scope: the request adds `config`; existing gaps (e.g. routes_command
+      // missing from docs/api.rst) must stay untouched.
+      const diff = execSync(`git -C ${workdir} diff`, { encoding: 'utf8' });
+      process.stdout.write(`# changed files:\n${status}`);
+      const strayRoutes = diff.split('\n').filter((l) => l.startsWith('+') && /routes/i.test(l));
+      assert.deepEqual(strayRoutes, [], `edits outside the request:\n${diff}`);
 
       execFileSync(VENV_PY, ['-m', 'pytest', 'tests/test_cli.py', '-q'], {
         cwd: workdir,
