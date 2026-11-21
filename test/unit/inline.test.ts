@@ -292,12 +292,25 @@ describe('runInlineEdit run termination', () => {
         const cursor = { turnId: 't1', lastEventId: 'e0' };
         return Promise.resolve()
           .then(() => fire(message('e1', 'call_1', editArgs), cursor, { sessionId: 's1' }))
+          .then(() =>
+            fire(
+              { type: 'model.message.delta', id: 'e1', usage: { input_tokens: 1700, output_tokens: 320 } },
+              cursor,
+              { sessionId: 's1' },
+            ),
+          )
           .then(() => fire(approval('call_1', 'e1'), cursor, { sessionId: 's1' }))
           .then(() => fire(response('call_1'), cursor, { sessionId: 's1' }));
       },
     ]);
     const activity: string[] = [];
-    const outcome = await runInlineEdit({ ...depsFor(client, () => []), onActivity: (t) => activity.push(t) });
+    const usage: number[] = [];
+    const outcome = await runInlineEdit({
+      ...depsFor(client, () => []),
+      onActivity: (t) => activity.push(t),
+      onUsage: (u) => usage.push(u.input + u.output),
+    });
+    assert.deepEqual(usage, [2020]);
     rejectAll = false;
     assert.equal(outcome, 'rejected');
     assert.deepEqual(cancels, ['s1']);

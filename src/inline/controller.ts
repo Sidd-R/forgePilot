@@ -17,6 +17,7 @@ import {
 } from '../mcp/tools/propose_edit';
 import { createTurnHandler, type CommandChoice } from '../flows/turns';
 import { describeActivity } from './activity';
+import { UsageMeter, type TokenUsage } from '../flows/usage';
 import { MessageBuffer } from '../flows/messages';
 import { parseFencedBlock } from './fenced';
 
@@ -86,6 +87,8 @@ export interface InlineDeps {
   onReviewComplete?: (runId: string, proposalId: string) => void;
   /** Short live description of what the model is doing. */
   onActivity?: (text: string) => void;
+  /** Running token totals across every turn of this inline edit. */
+  onUsage?: (usage: TokenUsage) => void;
   isCancelled: () => boolean;
   fixLimit?: number;
 }
@@ -102,6 +105,7 @@ interface TurnMemory {
  */
 export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
   const memory: TurnMemory = { buffer: new MessageBuffer() };
+  const meter = new UsageMeter();
   let acceptedHunks = 0;
   let reviewsOpened = 0;
   let lastDeny = '';
@@ -144,6 +148,9 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
   });
   const onEvent: TurnEventCallback = async (event, cursor, info) => {
     memory.buffer.feed(event);
+    if (meter.feed(event)) {
+      deps.onUsage?.(meter.total());
+    }
     if (deps.onActivity && (event.type === 'model.message' || event.type === 'model.message.delta')) {
       const activity = describeActivity(memory.buffer.get(event.id));
       if (activity) {

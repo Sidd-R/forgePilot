@@ -6,6 +6,7 @@ import type { CodeIndex } from '../context/index';
 import { readText } from '../edits/proposals';
 import { runInlineEdit, type InlineTarget } from './controller';
 import { LiveStatus, PendingMarker } from './marker';
+import { formatUsage } from '../flows/usage';
 import { noticeLevel } from '../panel/present';
 
 function showNotice(message: string): void {
@@ -106,6 +107,7 @@ export async function runInlineCommand(host: Host): Promise<void> {
     { location: vscode.ProgressLocation.Notification, title: `ForgePilot · ${where}`, cancellable: true },
     async (progress, token) => {
       const status = new LiveStatus(progress, marker);
+      let tokens = '';
       status.update(`Thinking with ${host.config.primaryModel}…`);
       // Hand the editor over to the diff colors once a proposal arrives.
       const review = {
@@ -143,6 +145,10 @@ export async function runInlineCommand(host: Host): Promise<void> {
             showNotice(message);
           },
           onActivity: (text) => status.update(text),
+          onUsage: (usage) => {
+            tokens = formatUsage(usage);
+            status.usage(tokens);
+          },
           onSession: (sessionId) => {
             host.activeSession = sessionId;
           },
@@ -163,18 +169,19 @@ export async function runInlineCommand(host: Host): Promise<void> {
       status.stop();
       marker.dispose();
       host.activeSession = undefined;
+      const spent = tokens ? ` Tokens: ${tokens}.` : '';
       if (outcome === 'applied') {
         void vscode.window
-          .showInformationMessage(`ForgePilot: edit applied to ${where}.`, 'Undo')
+          .showInformationMessage(`ForgePilot: edit applied to ${where}.${spent}`, 'Undo')
           .then((choice) => {
             if (choice === 'Undo') {
               void vscode.commands.executeCommand('forgePilot.undoLast');
             }
           });
       } else if (outcome === 'rejected') {
-        void vscode.window.showInformationMessage('ForgePilot: all hunks rejected; the file is unchanged.');
+        void vscode.window.showInformationMessage(`ForgePilot: all hunks rejected; the file is unchanged.${spent}`);
       } else if (outcome === 'cancelled') {
-        void vscode.window.showInformationMessage('ForgePilot: cancelled; the file is unchanged.');
+        void vscode.window.showInformationMessage(`ForgePilot: cancelled; the file is unchanged.${spent}`);
       }
     },
   );

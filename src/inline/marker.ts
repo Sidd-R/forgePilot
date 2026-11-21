@@ -58,6 +58,7 @@ export class PendingMarker {
  */
 export class LiveStatus {
   private label = 'Thinking…';
+  private tokens = '';
   private readonly started = Date.now();
   private lastRender = 0;
   private readonly timer: ReturnType<typeof setInterval>;
@@ -79,6 +80,11 @@ export class LiveStatus {
     }
   }
 
+  /** Token totals shown next to the timer, e.g. "1.7k in · 318 out". */
+  usage(text: string): void {
+    this.tokens = text;
+  }
+
   /** Hand over to the review: stop the clock, keep one instruction. */
   pause(message: string): void {
     this.stop();
@@ -96,7 +102,8 @@ export class LiveStatus {
     }
     this.lastRender = Date.now();
     const seconds = Math.floor((Date.now() - this.started) / 1000);
-    this.progress.report({ message: `${this.label}  ·  ${seconds}s` });
+    const tokens = this.tokens ? `  ·  ${this.tokens} tokens` : '';
+    this.progress.report({ message: `${this.label}  ·  ${seconds}s${tokens}` });
     const short = this.label.length > 70 ? `${this.label.slice(0, 69)}…` : this.label;
     this.marker.set(`${short}  ${seconds}s`);
   }
