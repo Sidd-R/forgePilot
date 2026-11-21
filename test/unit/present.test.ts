@@ -6,6 +6,7 @@ import {
   groupPack,
   noticeLevel,
   sessionUrl,
+  summarizeChanges,
 } from '../../src/panel/present';
 
 describe('describeTool', () => {
@@ -66,5 +67,21 @@ describe('formatting', () => {
     assert.equal(formatElapsed(65_400), '1:05');
     assert.equal(formatElapsed(-5), '0:00');
     assert.equal(sessionUrl('http://localhost:8790/', 'abc'), 'http://localhost:8790/sessions/abc');
+  });
+});
+
+describe('summarizeChanges', () => {
+  it('merges repeated reviews per file and lists changed files first', () => {
+    const files = summarizeChanges([
+      { path: 'docs/cli.rst', accepted: 0, rejected: 1, line: 1 },
+      { path: 'src/cli.py', accepted: 2, rejected: 0, line: 590 },
+      { path: 'docs/cli.rst', accepted: 1, rejected: 0, line: 300 },
+      { path: 'tests/test_cli.py', accepted: 0, rejected: 2, line: 1 },
+    ]);
+    assert.deepEqual(files, [
+      { path: 'docs/cli.rst', accepted: 1, rejected: 1, line: 300 },
+      { path: 'src/cli.py', accepted: 2, rejected: 0, line: 590 },
+      { path: 'tests/test_cli.py', accepted: 0, rejected: 2, line: 1 },
+    ]);
   });
 });

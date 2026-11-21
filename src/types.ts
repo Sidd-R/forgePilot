@@ -139,7 +139,8 @@ export interface TranscriptEvent {
     | 'status'
     | 'notice'
     | 'review'
-    | 'context';
+    | 'context'
+    | 'changes';
   text: string;
   /** Wire event id; deltas merge into their base message by id. */
   id?: string;

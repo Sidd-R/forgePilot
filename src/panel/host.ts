@@ -14,7 +14,7 @@ import {
 } from './requests';
 import { panelHtml } from './view';
 import { ChatHistory, type ChatStorage } from './history';
-import { sessionUrl } from './present';
+import { sessionUrl, summarizeChanges, type ReviewedFile } from './present';
 import { addUsage, formatUsage, ZERO_USAGE, type TokenUsage } from '../flows/usage';
 import { setBusy, type Host } from '../host';
 
@@ -197,6 +197,8 @@ export class PanelHost implements vscode.WebviewViewProvider {
     this.pushTranscript({ kind: 'user', text: prompt });
     this.flush();
     this.flushTimer = setInterval(() => this.flush(), 50);
+    const reviewed: ReviewedFile[] = [];
+    let finalStatus = 'error';
     try {
       const { files, symbols, clean } = parseMentions(this.host.index, prompt);
       const pack = buildPack(this.host.index, clean, {
@@ -229,7 +231,10 @@ export class PanelHost implements vscode.WebviewViewProvider {
         },
         onReviewComplete: (runId, proposalId, accepted, rejected) => {
           this.host.lastRunId = runId;
-          const path = this.host.store.getProposal(runId, proposalId)?.path ?? proposalId;
+          const proposal = this.host.store.getProposal(runId, proposalId);
+          const path = proposal?.path ?? proposalId;
+          const firstAccepted = proposal?.hunks.find((h) => h.decision === 'accepted');
+          reviewed.push({ path, accepted, rejected, line: firstAccepted?.startLine ?? 1 });
           this.pushTranscript({
             kind: 'review',
             text: `${path}: ${accepted} accepted, ${rejected} rejected`,
@@ -252,11 +257,14 @@ export class PanelHost implements vscode.WebviewViewProvider {
       } else if (result.sessionId) {
         this.sessionId = result.sessionId;
       }
-      this.pushTranscript({ kind: 'status', text: result.status });
+      finalStatus = result.status;
     } catch (err) {
       this.pushTranscript({ kind: 'notice', text: errorText(err) });
-      this.pushTranscript({ kind: 'status', text: 'error' });
     } finally {
+      if (reviewed.length > 0) {
+        this.pushTranscript({ kind: 'changes', text: JSON.stringify(summarizeChanges(reviewed)) });
+      }
+      this.pushTranscript({ kind: 'status', text: finalStatus });
       clearInterval(this.flushTimer);
       this.flushTimer = undefined;
       this.flush();

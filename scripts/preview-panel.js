@@ -61,6 +61,11 @@ const FIXTURES = {
       { kind: 'review', text: 'docs/cli.rst: 0 accepted, 1 rejected' },
       { kind: 'approval', text: 'command: PYTHONPATH=./src python -m pytest tests/test_cli.py -q' },
       { kind: 'text', id: 'm2', text: '**Done.** Changed:\n- `src/flask/cli.py` — new `config_command`, registered in `FlaskGroup`\n- `tests/test_cli.py` — masking test' },
+      { kind: 'changes', text: JSON.stringify([
+        { path: 'src/flask/cli.py', accepted: 3, rejected: 0, line: 590 },
+        { path: 'tests/test_cli.py', accepted: 1, rejected: 0, line: 430 },
+        { path: 'docs/cli.rst', accepted: 0, rejected: 1, line: 1 },
+      ]) },
       { kind: 'status', text: 'done' },
     ] },
   ],

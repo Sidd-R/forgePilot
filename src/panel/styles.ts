@@ -40,6 +40,10 @@ a:hover { text-decoration: underline; }
 .ctx-rank { color: var(--muted); font-size: 10px; width: 14px; text-align: right; flex: none; }
 .ctx-file { min-width: 0; font-family: var(--vscode-editor-font-family); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx-tokens { margin-left: auto; color: var(--muted); white-space: nowrap; font-size: 11px; }
+.card.changes { border-color: var(--vscode-testing-iconPassed, #3fb950); }
+.card.changes .ctx-rank { color: var(--vscode-testing-iconPassed, #3fb950); }
+.card.changes .unchanged .ctx-rank, .card.changes .unchanged .ctx-file { color: var(--muted); }
+.card.changes .unchanged .ctx-file { text-decoration: line-through; }
 .ctx-reason { color: var(--muted); font-size: 11px; margin-left: 20px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 #log { display: flex; flex-direction: column; gap: 6px; }

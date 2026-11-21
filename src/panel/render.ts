@@ -1,7 +1,7 @@
 // DOM renderers for the agent panel: transcript lines and the context card.
 import { TranscriptStore, type TranscriptItem } from './transcript';
 import { renderMarkdown } from './markdown';
-import { groupPack, noticeLevel, type PackRow } from './present';
+import { groupPack, noticeLevel, type PackRow, type ReviewedFile } from './present';
 
 export interface ToolTranscriptItem extends TranscriptItem {
   tool?: string;
@@ -97,6 +97,13 @@ export function createRenderer(container: HTMLElement, onOpen: OpenFile): {
         }
         return;
       }
+      if (item.kind === 'changes') {
+        const files = parseChanges(item.text);
+        if (files.length > 0) {
+          container.appendChild(buildChangesCard(files, onOpen));
+        }
+        return;
+      }
       const line = store.append(item);
       if (line.kind !== 'text') {
         container.appendChild(buildLine(line.kind, line.text, item.tool));
@@ -169,5 +176,45 @@ function parsePack(text: string): PackView | undefined {
     return Array.isArray(pack.items) ? pack : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/** End-of-run card: every reviewed file, changed ones clickable first. */
+export function buildChangesCard(files: ReviewedFile[], onOpen: OpenFile): HTMLElement {
+  const card = document.createElement('details');
+  card.className = 'card changes';
+  card.open = true;
+  const changed = files.filter((f) => f.accepted > 0).length;
+  const summary = document.createElement('summary');
+  summary.append(
+    span('title', changed > 0 ? `Files changed (${changed})` : 'No files changed'),
+    span('budget', `${files.length} reviewed`),
+  );
+  const rows = div('rows');
+  for (const file of files) {
+    const row = div(`ctx-row ${file.accepted > 0 ? '' : 'unchanged'}`);
+    const top = div('ctx-top');
+    const link = document.createElement('a');
+    link.className = 'ctx-file';
+    link.textContent = file.path;
+    link.title = `Open ${file.path}`;
+    link.addEventListener('click', () => onOpen(file.path, file.line));
+    const counts = file.accepted > 0
+      ? `${file.accepted} hunk${file.accepted === 1 ? '' : 's'}${file.rejected ? ` · ${file.rejected} rejected` : ''}`
+      : 'all rejected';
+    top.append(span('ctx-rank', file.accepted > 0 ? '✓' : '✕'), link, span('ctx-tokens', counts));
+    row.appendChild(top);
+    rows.appendChild(row);
+  }
+  card.append(summary, rows);
+  return card;
+}
+
+function parseChanges(text: string): ReviewedFile[] {
+  try {
+    const files = JSON.parse(text) as unknown;
+    return Array.isArray(files) ? (files as ReviewedFile[]) : [];
+  } catch {
+    return [];
   }
 }

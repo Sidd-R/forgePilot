@@ -136,3 +136,33 @@ export function formatElapsed(ms: number): string {
 export function sessionUrl(baseUrl: string, sessionId: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/sessions/${encodeURIComponent(sessionId)}`;
 }
+
+export interface ReviewedFile {
+  path: string;
+  accepted: number;
+  rejected: number;
+  /** First accepted hunk's line (1-based) in the original file. */
+  line: number;
+}
+
+/**
+ * Per-file outcome of a run: repeated reviews of one file merge, changed
+ * files (any accepted hunk) come first in review order, then untouched.
+ */
+export function summarizeChanges(reviews: ReviewedFile[]): ReviewedFile[] {
+  const byPath = new Map<string, ReviewedFile>();
+  for (const review of reviews) {
+    const seen = byPath.get(review.path);
+    if (!seen) {
+      byPath.set(review.path, { ...review });
+      continue;
+    }
+    if (seen.accepted === 0 && review.accepted > 0) {
+      seen.line = review.line;
+    }
+    seen.accepted += review.accepted;
+    seen.rejected += review.rejected;
+  }
+  const files = [...byPath.values()];
+  return [...files.filter((f) => f.accepted > 0), ...files.filter((f) => f.accepted === 0)];
+}
