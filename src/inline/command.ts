@@ -96,7 +96,8 @@ export async function runInlineCommand(host: Host): Promise<void> {
     return;
   }
   host.cancelled = false;
-  const spec = loadAgentFile(host.agentsDir, 'forgepilot-inline.yaml', host.config.primaryModel).manifest;
+  const agent = loadAgentFile(host.agentsDir, 'forgepilot-inline.yaml', host.config.primaryModel);
+  const spec = agent.manifest;
   const marker = new PendingMarker(
     editor,
     new vscode.Range(target.startLine - 1, 0, target.endLine - 1, 0),
@@ -138,6 +139,7 @@ export async function runInlineCommand(host: Host): Promise<void> {
       outcome = await runInlineEdit({
         client: host.client,
         spec,
+        agentName: agent.name,
         models: [host.config.primaryModel, ...host.config.fallbackModels],
         target,
         instruction,

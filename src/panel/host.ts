@@ -208,14 +208,12 @@ export class PanelHost implements vscode.WebviewViewProvider {
       });
       // Inline so saved chats keep which files were chosen and why.
       this.pushTranscript({ kind: 'context', text: packSummary(pack) });
-      const spec = loadAgentFile(
-        this.host.agentsDir,
-        'forgepilot-coder.yaml',
-        this.host.config.primaryModel,
-      ).manifest;
+      const agent = loadAgentFile(this.host.agentsDir, 'forgepilot-coder.yaml', this.host.config.primaryModel);
+      const spec = agent.manifest;
       const result = await runAgentTurn({
         client: this.host.client,
         spec,
+        agentName: agent.name,
         models: [this.host.config.primaryModel, ...this.host.config.fallbackModels],
         input: renderPack(pack, clean),
         store: this.host.store,

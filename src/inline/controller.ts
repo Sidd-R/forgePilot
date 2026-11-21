@@ -72,6 +72,8 @@ export function selectNewErrors(
 export interface InlineDeps {
   client: TrueForgeClient;
   spec: WireAgentSpec;
+  /** Registry agent that primary-model sessions are linked to. */
+  agentName?: string;
   models: string[];
   target: InlineTarget;
   instruction: string;
@@ -168,7 +170,8 @@ export async function runInlineEdit(deps: InlineDeps): Promise<InlineOutcome> {
     }
   };
   const turnDeps: TurnDeps = {
-    createSession: (spec) => deps.client.createSession(spec),
+    createSession: (spec) =>
+      deps.client.createSession(spec, spec.model.name === deps.models[0] ? deps.agentName : undefined),
     streamTurn: (sessionId, input, handler, opts) =>
       deps.client.streamTurn(sessionId, input, handler, opts),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

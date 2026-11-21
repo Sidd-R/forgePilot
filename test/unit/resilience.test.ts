@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { HttpError } from '../../src/trueforge/client';
+import { HttpError, coversSpec } from '../../src/trueforge/client';
 import {
   ExhaustedError,
   RETRY_DELAYS_MS,
@@ -266,5 +266,24 @@ describe('runTurnResilient', () => {
     assert.equal(d.calls.streams, 1);
     assert.deepEqual(d.calls.models, ['m/one']);
     assert.deepEqual(d.calls.sleeps, []);
+  });
+});
+
+describe('coversSpec', () => {
+  it('accepts a stored manifest with server-filled defaults', () => {
+    const sent = { model: { name: 'm' }, mcp_servers: [{ name: 'forge-editor', preload: true }] };
+    const stored = {
+      model: { name: 'm' },
+      mcp_servers: [{ name: 'forge-editor', preload: true, disable_tools: [] }],
+      config: { memory: { enabled: false } },
+    };
+    assert.equal(coversSpec(stored, sent), true);
+  });
+
+  it('rejects a changed value, model or tool list', () => {
+    const sent = { model: { name: 'm' }, instructions: 'new', tools: ['a'] };
+    assert.equal(coversSpec({ model: { name: 'm' }, instructions: 'old', tools: ['a'] }, sent), false);
+    assert.equal(coversSpec({ model: { name: 'x' }, instructions: 'new', tools: ['a'] }, sent), false);
+    assert.equal(coversSpec({ model: { name: 'm' }, instructions: 'new', tools: ['a', 'b'] }, sent), false);
   });
 });

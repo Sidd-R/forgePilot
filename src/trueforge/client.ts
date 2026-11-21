@@ -38,6 +38,31 @@ function sleep(ms: number): Promise<void> {
  * Thin wrapper over TrueForge sessions, streamed turns, approval answers,
  * and cancellation. Retry/fallback policy lives in resilience.ts.
  */
+/**
+ * True when `stored` holds every value of `sent`. TrueForge fills in
+ * defaults (empty tool lists, memory off, ...) on save, so the stored
+ * manifest is a superset of what was sent; arrays must match exactly.
+ */
+export function coversSpec(stored: unknown, sent: unknown): boolean {
+  if (Array.isArray(sent)) {
+    return (
+      Array.isArray(stored) &&
+      stored.length === sent.length &&
+      sent.every((item, index) => coversSpec(stored[index], item))
+    );
+  }
+  if (typeof sent === 'object' && sent !== null) {
+    if (typeof stored !== 'object' || stored === null) {
+      return false;
+    }
+    const record = stored as Record<string, unknown>;
+    return Object.entries(sent).every(
+      ([key, value]) => value === undefined || coversSpec(record[key], value),
+    );
+  }
+  return stored === sent;
+}
+
 export class TrueForgeClient {
   constructor(
     private readonly baseUrl: string,
@@ -85,12 +110,33 @@ export class TrueForgeClient {
     }
   }
 
-  async createSession(spec: WireAgentSpec): Promise<string> {
+  /**
+   * New session. With `agentName`, the registry agent of that name is
+   * first brought up to date with `spec`, and the session references it,
+   * so TrueForge lists the session under that agent. Otherwise (fallback
+   * models, or if the registry is unavailable) the spec is sent inline.
+   */
+  async createSession(spec: WireAgentSpec, agentName?: string): Promise<string> {
+    const agent = agentName ? await this.syncRegistryAgent(agentName, spec).catch(() => false) : false;
     const res = await this.request('POST', '/api/v1/sessions', {
-      agent: { spec },
+      agent: agent ? { name: agentName } : { spec },
     });
     const data = (await res.json()) as { data: { id: string } };
     return data.data.id;
+  }
+
+  /** True when the registry agent now holds exactly `spec`. */
+  private async syncRegistryAgent(name: string, spec: WireAgentSpec): Promise<boolean> {
+    const res = await this.request('GET', '/api/v1/agents');
+    const list = (await res.json()) as { data: Array<{ id: string; name: string; manifest?: unknown }> };
+    const agent = list.data.find((entry) => entry.name === name);
+    if (!agent) {
+      return false; // Not loaded yet: "ForgePilot: Load Agent Definitions" creates it.
+    }
+    if (!coversSpec(agent.manifest, spec)) {
+      await this.request('PUT', `/api/v1/agents/${agent.id}`, { manifest: spec });
+    }
+    return true;
   }
 
   async cancel(sessionId: string): Promise<void> {
