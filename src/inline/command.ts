@@ -11,7 +11,7 @@ import { formatUsage } from '../flows/usage';
 import { noticeLevel } from '../panel/present';
 
 /** How long the inline result stays on screen after the review ends. */
-const RESULT_VISIBLE_MS = 15_000;
+const RESULT_VISIBLE_MS = 25_000;
 
 function showNotice(message: string): void {
   const level = noticeLevel(message);
