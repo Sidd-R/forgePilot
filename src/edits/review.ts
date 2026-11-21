@@ -235,6 +235,7 @@ export class ReviewController implements ReviewPort {
   private async finish(rootDir: string, review: OpenReview): Promise<ReviewResult> {
     const key = this.key(review.runId, review.proposalId);
     this.reviews.delete(key);
+    this.view.releaseLenses(review.runId, review.proposalId);
     for (const editor of vscode.window.visibleTextEditors) {
       if (editor.document.uri.toString() === review.uri.toString()) {
         this.view.refresh(editor);

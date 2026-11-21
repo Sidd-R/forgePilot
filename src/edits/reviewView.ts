@@ -72,7 +72,43 @@ export class ReviewView implements vscode.CodeLensProvider {
     textDecoration: 'line-through',
   });
 
+  /**
+   * Argument-free command per lens button. VS Code keeps a lens's
+   * arguments in a cache that it drops whenever lenses are re-provided
+   * (after every decision), so a quick click on a still-visible button
+   * failed with "Actual command not found". Ids are keyed by review.
+   */
+  private readonly lensCommands = new Map<string, Map<string, { id: string; disposable: vscode.Disposable }>>();
+  private lensCounter = 0;
+
   constructor(private readonly getReviews: () => OpenReview[]) {}
+
+  private lensCommand(reviewKey: string, command: string, args: unknown[]): string {
+    let byReview = this.lensCommands.get(reviewKey);
+    if (!byReview) {
+      byReview = new Map();
+      this.lensCommands.set(reviewKey, byReview);
+    }
+    const target = `${command} ${JSON.stringify(args)}`;
+    let entry = byReview.get(target);
+    if (!entry) {
+      this.lensCounter += 1;
+      const id = `forgePilot.lens.${this.lensCounter}`;
+      entry = { id, disposable: vscode.commands.registerCommand(id, () => vscode.commands.executeCommand(command, ...args)) };
+      byReview.set(target, entry);
+    }
+    return entry.id;
+  }
+
+  /** Drop a closed review's lens commands, after any in-flight clicks. */
+  releaseLenses(runId: string, proposalId: string): void {
+    const key = `${runId}:${proposalId}`;
+    const byReview = this.lensCommands.get(key);
+    this.lensCommands.delete(key);
+    if (byReview) {
+      setTimeout(() => byReview.forEach((entry) => entry.disposable.dispose()), 10_000);
+    }
+  }
 
   fire(): void {
     this.lensChanged.fire();
@@ -94,8 +130,7 @@ export class ReviewView implements vscode.CodeLensProvider {
         lenses.push(
           new vscode.CodeLens(range, {
             title: lens.title,
-            command: lens.command,
-            arguments: lens.args,
+            command: this.lensCommand(`${review.runId}:${review.proposalId}`, lens.command, lens.args),
           }),
         );
       }
