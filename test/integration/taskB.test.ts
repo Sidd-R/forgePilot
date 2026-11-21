@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { execFileSync, execSync } from 'node:child_process';
 import { TrueForgeClient } from '../../src/trueforge/client';
 import { loadAgentFile } from '../../src/trueforge/agents';
+import type { TranscriptEvent } from '../../src/types';
 import { registerMcpServer, unregisterMcpServer } from '../../src/trueforge/setup';
 import { startMcpServer, type RunningMcpServer } from '../../src/mcp/server';
 import { ProposalStore } from '../../src/edits/proposals';
@@ -150,6 +151,7 @@ describe('task B: agent mode end to end', { timeout: 900_000 }, () => {
         'forgepilot-coder.yaml',
         MODEL,
       ).manifest;
+      const transcript: TranscriptEvent[] = [];
       const result = await runAgentTurn({
         client,
         spec,
@@ -159,11 +161,19 @@ describe('task B: agent mode end to end', { timeout: 900_000 }, () => {
         review,
         proposeDeps,
         askCommand: () => Promise.resolve('once'),
-        onTranscript: () => undefined,
+        onTranscript: (event) => transcript.push(event),
         onNotice: () => undefined,
         isCancelled: () => false,
       });
       assert.equal(result.status, 'done');
+      const kinds = transcript.reduce<Record<string, number>>((acc, e) => {
+        acc[e.kind] = (acc[e.kind] ?? 0) + 1;
+        return acc;
+      }, {});
+      process.stdout.write(`# transcript kinds: ${JSON.stringify(kinds)}\n`);
+      for (const event of transcript.filter((e) => e.kind.startsWith('subagent'))) {
+        process.stdout.write(`# ${event.kind} ${event.tool}: ${event.text.slice(0, 160).replace(/\n/g, ' ')}\n`);
+      }
 
       const status = execSync(`git -C ${workdir} status --short`, { encoding: 'utf8' });
       const changed = status.trim().split('\n').filter(Boolean);
