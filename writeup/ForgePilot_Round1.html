@@ -78,7 +78,7 @@
   <li><b>Context engineering: dynamic sub-agents</b> (agent mode). Exploration is handed off, and only paths, line ranges and reasons come back, which keeps the main context small.</li>
   <li><b>Context engineering: deferred tool loading</b> for the secondary <code>forge-workspace</code> server (see above).</li>
   <li><b>Context engineering: compaction</b> at 60k input tokens, so long multi-file runs keep going.</li>
-  <li>Sub-agents, deferred tool loading and compaction all appear in the Task B TrueForge session alongside the turns and tool calls.</li>
+  <li>Sub-agents and deferred tool loading are visible in the Task B TrueForge session alongside the turns and tool calls. Compaction is a safety net for long runs; it triggers only past 60k input tokens, so a short run like Task B may not reach it.</li>
   <li><b>Iteration limits</b>: 60 for the coder agent, 6 for the inline agent.</li>
   <li><b>Per-agent tool scoping</b>: <code>enable_tools: [propose_edit]</code> for the inline agent.</li>
   <li><b>Deterministic edits</b>: temperature 0 and <code>parallel_tool_calls: false</code>.</li>
