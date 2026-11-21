@@ -52,6 +52,13 @@ const FIXTURES = {
       { kind: 'text', id: 'm1', text: '' },
       { kind: 'text', id: 'm1', text: 'I\'ll look at how the built-in commands are registered ', delta: true },
       { kind: 'text', id: 'm1', text: 'in `FlaskGroup`, then add `config_command`.', delta: true },
+      { kind: 'subagent', tool: 'explore-cli-config', text: 'Explore the Flask repo workspace to implement `flask config` CLI command. Find:' },
+      { kind: 'tool_call', tool: 'find_text', by: 'explore-cli-config', text: '"def (run|shell|routes)|add_command" in src/flask/cli.py' },
+      { kind: 'tool_call', tool: 'read_file', by: 'explore-cli-config', text: 'src/flask/cli.py:886-1136' },
+      { kind: 'tool_call', tool: 'read_file', by: 'explore-cli-config', text: 'docs/cli.rst:1-250' },
+      { kind: 'subagent_result', tool: 'explore-cli-config', text: JSON.stringify({ status: 'done', summary: '- `src/flask/cli.py:593-596` — registration point, `FlaskGroup.__init__` adds default commands, add `config` here.\n- `src/flask/cli.py:890-1004` — `run_command` pattern for `@click.command` + `with_appcontext`.\n- `docs/cli.rst:300-360` — built-in commands section; document `flask config` here.\n- `tests/test_cli.py:430-520` — CLI runner tests to mirror.' }) },
+      { kind: 'tool_call', tool: 'list tools', text: 'forge-workspace' },
+      { kind: 'tool_call', tool: 'get_diagnostics', text: 'src/flask/cli.py · deferred via forge-workspace' },
       { kind: 'tool_call', tool: 'search_code', text: '"built-in command routes shell"' },
       { kind: 'tool_call', tool: 'read_file', text: 'src/flask/cli.py:1000-1060' },
       { kind: 'tool_call', tool: 'read_file', text: 'tests/test_cli.py:430-520' },
@@ -91,7 +98,7 @@ for (const theme of Object.keys(THEMES)) {
     fs.writeFileSync(file, page(theme, fixture));
     const png = file.replace(/\.html$/, '.png');
     execFileSync(chrome, ['--headless=new', '--disable-gpu', '--allow-file-access-from-files', '--hide-scrollbars',
-      `--screenshot=${png}`, '--window-size=500,860', '--virtual-time-budget=1500', `file://${file}`], { stdio: 'ignore' });
+      `--screenshot=${png}`, `--window-size=500,${process.env.PANEL_HEIGHT ?? 860}`, '--virtual-time-budget=1500', `file://${file}`], { stdio: 'ignore' });
     console.log(png);
   }
 }

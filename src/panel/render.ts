@@ -5,6 +5,8 @@ import { groupPack, noticeLevel, type PackRow, type ReviewedFile } from './prese
 
 export interface ToolTranscriptItem extends TranscriptItem {
   tool?: string;
+  /** Subagent that ran this tool, when not the main agent. */
+  by?: string;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -21,6 +23,8 @@ const TOOL_ICON: Record<string, string> = {
   get_diagnostics: '⚠',
   git_diff: '±',
   list_symbols: '≡',
+  'load tool': '⇣',
+  'list tools': '⇣',
 };
 
 function div(className: string, text?: string): HTMLDivElement {
@@ -40,16 +44,21 @@ function span(className: string, text: string): HTMLSpanElement {
 }
 
 /** Build the element for a non-streaming line; text lines are filled by the caller. */
-function buildLine(kind: string, text: string, tool?: string): HTMLElement {
+function buildLine(kind: string, text: string, tool?: string, by?: string): HTMLElement {
   switch (kind) {
     case 'user':
       return div('msg msg-user', text);
-    case 'tool_call':
     case 'subagent': {
-      const row = div('msg msg-tool');
+      const row = div('msg msg-tool msg-subagent');
+      row.append(span('icon', '🤖'), span('name', `${tool ?? 'subagent'} started`), span('detail', text));
+      row.title = `Subagent ${tool ?? ''}: ${text}`;
+      return row;
+    }
+    case 'tool_call': {
+      const row = div(`msg msg-tool${by ? ' by-sub' : ''}`);
       const name = tool ?? kind;
       row.append(span('icon', TOOL_ICON[name] ?? '•'), span('name', name), span('detail', text));
-      row.title = `${name} ${text}`;
+      row.title = `${by ? `${by} · ` : ''}${name} ${text}`;
       return row;
     }
     case 'approval': {
@@ -97,6 +106,10 @@ export function createRenderer(container: HTMLElement, onOpen: OpenFile): {
         }
         return;
       }
+      if (item.kind === 'subagent_result') {
+        container.appendChild(buildSubagentCard(item.tool ?? 'subagent', item.text));
+        return;
+      }
       if (item.kind === 'changes') {
         const files = parseChanges(item.text);
         if (files.length > 0) {
@@ -106,7 +119,7 @@ export function createRenderer(container: HTMLElement, onOpen: OpenFile): {
       }
       const line = store.append(item);
       if (line.kind !== 'text') {
-        container.appendChild(buildLine(line.kind, line.text, item.tool));
+        container.appendChild(buildLine(line.kind, line.text, item.tool, item.by));
         return;
       }
       let node = textNodes.get(line.key);
@@ -217,4 +230,29 @@ function parseChanges(text: string): ReviewedFile[] {
   } catch {
     return [];
   }
+}
+
+/** Subagent's final answer as a collapsible card with its markdown summary. */
+export function buildSubagentCard(name: string, text: string): HTMLElement {
+  let status = 'done';
+  let summary = text;
+  try {
+    const parsed = JSON.parse(text) as { status?: string; summary?: string };
+    status = parsed.status ?? status;
+    summary = parsed.summary ?? '';
+  } catch {
+    // Older/plain payloads: show the text as-is.
+  }
+  const card = document.createElement('details');
+  card.className = `card subagent-result ${status === 'done' ? '' : 'failed'}`;
+  card.open = true;
+  const head = document.createElement('summary');
+  head.append(
+    span('title', `🤖 ${name} ${status === 'done' ? 'finished' : status}`),
+    span('budget', 'subagent result'),
+  );
+  const body = div('msg-text sub-body');
+  body.innerHTML = summary.trim() ? renderMarkdown(summary) : '<em>No summary returned.</em>';
+  card.append(head, body);
+  return card;
 }

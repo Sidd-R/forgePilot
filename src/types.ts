@@ -140,13 +140,16 @@ export interface TranscriptEvent {
     | 'notice'
     | 'review'
     | 'context'
-    | 'changes';
+    | 'changes'
+    | 'subagent_result';
   text: string;
   /** Wire event id; deltas merge into their base message by id. */
   id?: string;
   /** True for streaming delta fragments. */
   delta?: boolean;
   tool?: string;
+  /** Set on tool rows run by a subagent: that subagent's name. */
+  by?: string;
   durationMs?: number;
   resultBytes?: number;
 }

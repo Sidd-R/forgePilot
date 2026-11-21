@@ -9,6 +9,7 @@ import {
   type ProposeEditDeps,
 } from '../mcp/tools/propose_edit';
 import { describeTool } from '../panel/present';
+import { isSubagentThread, subagentTranscript } from './subagents';
 import { MessageBuffer, messageText, toolCallFromMessage } from './messages';
 
 const APPROVAL_TOOL_NAMES: ReadonlySet<string> = new Set(APPROVAL_TOOLS);
@@ -49,10 +50,20 @@ export function createTurnHandler(deps: TurnFlowDeps): TurnEventCallback {
   const messages = new MessageBuffer();
   const sessionCommands = new Set<string>();
   let proposalCounter = 0;
+  const subagentNames = new Map<string, string>();
   const answer = deps.answerApproval ?? deps.client.answerApproval.bind(deps.client);
 
   return async (event, cursor, info) => {
-    if (event.type === 'model.message' || event.type === 'model.message.delta') {
+    const lifecycle = subagentTranscript(event, subagentNames);
+    if (lifecycle) {
+      deps.onTranscript?.(lifecycle);
+    }
+    const fromSubagent = isSubagentThread(event);
+    if (fromSubagent && (event.type === 'model.message' || event.type === 'model.message.delta')) {
+      // Subagent narration stays out of the main reply; its final
+      // answer arrives as the result card on thread.done.
+      messages.feed(event);
+    } else if (event.type === 'model.message' || event.type === 'model.message.delta') {
       messages.feed(event);
       deps.onTranscript?.({
         kind: 'text',
@@ -66,12 +77,14 @@ export function createTurnHandler(deps: TurnFlowDeps): TurnEventCallback {
       // harness-run tools (reads, searches) with what they touched.
       const callId = typeof event['tool_call_id'] === 'string' ? event['tool_call_id'] : '';
       const call = messages.findCall(callId);
-      if (call && !APPROVAL_TOOL_NAMES.has(call.name)) {
+      if (call && !APPROVAL_TOOL_NAMES.has(call.name) && call.name !== 'create_sub_agent') {
+        const label = describeTool(call.name, call.args);
         deps.onTranscript?.({
           kind: 'tool_call',
-          text: describeTool(call.name, call.args).detail,
-          tool: call.name,
+          text: label.detail,
+          tool: label.label,
           resultBytes: messageText(event).length,
+          by: fromSubagent ? (subagentNames.get(event.thread_id ?? '') ?? 'subagent') : undefined,
         });
       }
     }

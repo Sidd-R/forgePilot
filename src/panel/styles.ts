@@ -40,6 +40,15 @@ a:hover { text-decoration: underline; }
 .ctx-rank { color: var(--muted); font-size: 10px; width: 14px; text-align: right; flex: none; }
 .ctx-file { min-width: 0; font-family: var(--vscode-editor-font-family); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx-tokens { margin-left: auto; color: var(--muted); white-space: nowrap; font-size: 11px; }
+.msg-tool.by-sub { margin-left: 14px; padding-left: 8px; border-left: 2px solid var(--border); }
+.msg-tool .icon, .msg-tool .name { flex: none; white-space: nowrap; }
+.msg-subagent { flex-wrap: wrap; }
+.msg-subagent .name { font-weight: 600; }
+.msg-tool.msg-subagent .detail { flex-basis: 100%; margin-left: 20px; white-space: normal; font-family: var(--vscode-font-family); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.card.subagent-result { border-color: var(--vscode-focusBorder); }
+.card.subagent-result.failed { border-color: var(--vscode-errorForeground); }
+.card .sub-body { padding: 0 10px 8px; font-size: 12px; max-height: 260px; overflow-y: auto; }
+.card .sub-body ul { margin: 2px 0; padding-left: 18px; }
 .card.changes { border-color: var(--vscode-testing-iconPassed, #3fb950); }
 .card.changes .ctx-rank { color: var(--vscode-testing-iconPassed, #3fb950); }
 .card.changes .unchanged .ctx-rank, .card.changes .unchanged .ctx-file { color: var(--muted); }
