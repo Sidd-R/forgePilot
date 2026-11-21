@@ -23,6 +23,24 @@ describe('describeTool', () => {
     assert.equal(describeTool('find_text', { pattern: 'def \\w+' }).detail, '"def \\w+"');
   });
 
+  it('shows find_text globs and file listings', () => {
+    assert.equal(describeTool('find_text', { pattern: 'def x', glob: 'src/a.py' }).detail, '"def x" in src/a.py');
+    assert.equal(describeTool('find_text', { pattern: '', glob: 'docs/cli' }).detail, 'list files docs/cli');
+  });
+
+  it('unwraps deferred tool calls to the real tool', () => {
+    const label = describeTool('call_tool', {
+      mcp_server: 'forge-workspace',
+      tool_name: 'get_diagnostics',
+      input: { path: 'tests/test_cli.py' },
+    });
+    assert.deepEqual([label.label, label.detail], ['get_diagnostics', 'tests/test_cli.py · deferred via forge-workspace']);
+    assert.deepEqual(
+      [describeTool('get_tool_info', { mcp_server: 'forge-workspace', tool_name: 'git_diff' }).detail],
+      ['forge-workspace/git_diff'],
+    );
+  });
+
   it('lists every file of a batched propose_edit', () => {
     const label = describeTool('propose_edit', {
       files: [{ path: 'a.py' }, { path: 'b.rst' }],

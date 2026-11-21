@@ -35,9 +35,33 @@ export function describeTool(name: string, args: Record<string, unknown>): ToolL
       break;
     }
     case 'search_code':
-    case 'find_text':
-      detail = `"${str(args['query']) || str(args['pattern']) || str(args['text'])}"`;
+      detail = `"${str(args['query'])}"`;
       break;
+    case 'find_text': {
+      const pattern = str(args['pattern']) || str(args['query']);
+      const glob = str(args['glob']);
+      detail = pattern
+        ? `"${pattern}"${glob ? ` in ${glob}` : ''}`
+        : `list files ${glob || '(workspace)'}`;
+      break;
+    }
+    case 'call_tool': {
+      // Deferred tool loading: show the real tool and its target.
+      const inner = str(args['tool_name']) || 'tool';
+      const input = typeof args['input'] === 'object' && args['input'] !== null
+        ? (args['input'] as Record<string, unknown>)
+        : {};
+      const innerDetail = describeTool(inner, input).detail;
+      return {
+        icon: ICONS[inner] ?? icon,
+        label: inner,
+        detail: `${innerDetail ? `${innerDetail} · ` : ''}deferred via ${str(args['mcp_server']) || 'MCP'}`,
+      };
+    }
+    case 'get_tool_info':
+      return { icon: '⇣', label: 'load tool', detail: `${str(args['mcp_server'])}/${str(args['tool_name'])}` };
+    case 'list_tools':
+      return { icon: '⇣', label: 'list tools', detail: str(args['mcp_server']) || 'all servers' };
     case 'run_command':
       detail = str(args['command']);
       break;
