@@ -7,6 +7,8 @@ Forge-a-thon (Round 1). Team TM-55B1C632C89.
 
 Starting point: built from scratch, no fork, no upstream agent loop.
 
+Licence: [MIT](LICENSE).
+
 ## Prerequisites
 
 - Node 22.14+
@@ -36,6 +38,9 @@ name: muse
 base_url: https://<your-openai-compatible-endpoint>/v1
 api_key: <your-key-here>   # never commit keys; placeholders only
 ```
+
+See [`models.example.yaml`](models.example.yaml) for a full example model
+configuration (TrueForge models plus the matching `forgepilot.models.*` settings).
 
 Then launch the extension (`F5` in VS Code) and run
 **ForgePilot: Load Agent Definitions**.

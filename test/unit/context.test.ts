@@ -96,6 +96,48 @@ describe('chunkFile', () => {
     assert.ok(cls?.text.includes('make_context'));
   });
 
+  it('splits long python classes into a header and one chunk per method', () => {
+    const filler = Array.from({ length: 30 }, (_, i) => `        x${i} = ${i}`).join('\n');
+    const src = [
+      'import click',
+      '',
+      '',
+      '@click.group()',
+      'class Big:',
+      '    """A large class."""',
+      '    limit = 3',
+      '',
+      '    @property',
+      '    def name(self):',
+      '        """The name."""',
+      filler,
+      '        def inner():',
+      '            return 1',
+      '        return inner',
+      '',
+      '    async def load(self):',
+      '        return 2',
+      '',
+      '',
+      '@click.command("routes")',
+      'def routes_command():',
+      '    pass',
+      '',
+    ].join('\n');
+    const chunks = chunkFile('src/big.py', src);
+    const symbols = chunks.map((c) => c.symbol);
+    assert.deepEqual(symbols, [undefined, 'Big', 'Big.name', 'Big.load', 'routes_command']);
+    const header = chunks.find((c) => c.symbol === 'Big');
+    assert.ok(header?.text.startsWith('@click.group()'), 'class decorator stays with the class');
+    assert.equal(header?.signature, 'class Big:');
+    const name = chunks.find((c) => c.symbol === 'Big.name');
+    assert.ok(name?.text.startsWith('    @property'), 'method decorator stays with the method');
+    assert.equal(name?.doc, 'The name.');
+    assert.ok(name?.text.includes('def inner'), 'nested functions stay inside their method');
+    const routes = chunks.find((c) => c.symbol === 'routes_command');
+    assert.ok(routes?.text.startsWith('@click.command("routes")'));
+  });
+
   it('splits rst by section heading', () => {
     const chunks = chunkFile('docs/cli.rst', CLI_RST);
     assert.ok(chunks.length >= 2);
@@ -184,6 +226,20 @@ describe('buildPack', () => {
     assert.ok(pack.totalTokens <= 8000);
     for (const item of pack.items) {
       assert.ok(item.reason.length > 0);
+    }
+  });
+
+  it('never takes a data file as a partner or on a filename match', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fpctx-data-'));
+    fs.mkdirSync(path.join(dataRoot, 'src'));
+    fs.mkdirSync(path.join(dataRoot, 'tests', 'static'), { recursive: true });
+    fs.writeFileSync(path.join(dataRoot, 'src', 'config.py'), 'class Config(dict):\n    pass\n');
+    fs.writeFileSync(path.join(dataRoot, 'tests', 'static', 'config.json'), '{"TEST_KEY": "foo"}\n');
+    const index = CodeIndex.build(dataRoot);
+    const pack = buildPack(index, 'change the config loader', { budget: 8000 });
+    assert.ok(pack.items.some((item) => item.path === 'src/config.py'));
+    for (const item of pack.items.filter((i) => i.path.endsWith('.json'))) {
+      assert.ok(!/partner|filename/.test(item.reason), item.reason);
     }
   });
 

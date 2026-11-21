@@ -1,0 +1,26 @@
+# Example model configuration for ForgePilot.
+# Copy the values into TrueForge and VS Code; never commit real API keys.
+#
+# ForgePilot never calls a model provider itself. Models live in TrueForge;
+# the extension only references them by name, so any model TrueForge can
+# reach works without code changes.
+
+# 1) Add models in the TrueForge UI (http://localhost:8790 -> Settings -> Models).
+#    Any catalog provider, AI gateway, or OpenAI-compatible endpoint works.
+trueforge_models:
+  - provider: custom
+    name: muse
+    base_url: https://<your-openai-compatible-endpoint>/v1
+    api_key: <your-key-here>
+  # Optional second model, used automatically if the primary fails (Task C).
+  # - provider: custom
+  #   name: local
+  #   base_url: http://localhost:11434/v1   # e.g. a local OpenAI-compatible server
+  #   api_key: none
+
+# 2) Point ForgePilot at them in VS Code settings.json, then run
+#    "ForgePilot: Load Agent Definitions" to sync both agents to TrueForge.
+vscode_settings:
+  forgepilot.models.primary: "<provider>/<model>"
+  forgepilot.models.fallbacks:
+    - "<provider>/<fallback-model>"

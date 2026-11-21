@@ -82,22 +82,46 @@ export interface PackFile {
   ranges: Array<{ startLine: number; endLine: number }>;
 }
 
+/**
+ * One file's reasons as short unique phrases: the per-chunk reason strings
+ * ("a; b; c") are split, the `matched "x", "y"` phrases are merged into a
+ * single list of at most five words, and everything else is deduplicated.
+ */
+function mergeReasons(reasons: string[]): string[] {
+  const words: string[] = [];
+  const other: string[] = [];
+  for (const piece of reasons.flatMap((reason) => reason.split('; '))) {
+    const quoted = piece.startsWith('matched ') ? [...piece.matchAll(/"([^"]+)"/g)] : [];
+    if (quoted.length > 0) {
+      for (const [, word] of quoted) {
+        if (!words.includes(word)) {
+          words.push(word);
+        }
+      }
+    } else if (piece && !other.includes(piece)) {
+      other.push(piece);
+    }
+  }
+  const matched = words.length > 0 ? [`matched ${words.slice(0, 5).join(', ')}`] : [];
+  return [...matched, ...other];
+}
+
 /** Group context items by file, keeping first-seen (rank) order. */
 export function groupPack(items: PackRow[]): PackFile[] {
-  const byPath = new Map<string, PackFile>();
+  const byPath = new Map<string, PackFile & { raw: string[] }>();
   for (const item of items) {
     let file = byPath.get(item.path);
     if (!file) {
-      file = { path: item.path, tokens: 0, reasons: [], ranges: [] };
+      file = { path: item.path, tokens: 0, reasons: [], ranges: [], raw: [] };
       byPath.set(item.path, file);
     }
     file.tokens += item.tokens;
     file.ranges.push({ startLine: item.startLine, endLine: item.endLine });
-    if (item.reason && !file.reasons.includes(item.reason)) {
-      file.reasons.push(item.reason);
+    if (item.reason) {
+      file.raw.push(item.reason);
     }
   }
-  return [...byPath.values()];
+  return [...byPath.values()].map(({ raw, ...file }) => ({ ...file, reasons: mergeReasons(raw) }));
 }
 
 /** "1:05" style elapsed time. */

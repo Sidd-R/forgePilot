@@ -54,19 +54,30 @@ export class CodeIndex {
           id: chunk.id,
           name: splitCodeWords(`${chunk.symbol ?? ''} ${relPath}`),
           signature: splitCodeWords(chunk.signature),
-          text: `${chunk.text.slice(0, 4000)} ${chunk.doc ?? ''}`.toLowerCase(),
+          text: `${chunk.text.slice(0, 12000)} ${chunk.doc ?? ''}`.toLowerCase(),
           index: idx,
         });
         if (chunk.symbol) {
-          names.push(chunk.symbol);
-          const list = index.symbols.get(chunk.symbol) ?? [];
-          list.push({
+          const entry = {
             symbol: chunk.symbol,
             path: relPath,
             startLine: chunk.startLine,
             endLine: chunk.endLine,
-          });
-          index.symbols.set(chunk.symbol, list);
+          };
+          // Methods are indexed as `Class.method` and as `method`; the repo
+          // outline lists top-level names only.
+          const keys = [chunk.symbol];
+          const dot = chunk.symbol.lastIndexOf('.');
+          if (dot > 0 && chunk.kind !== 'section') {
+            keys.push(chunk.symbol.slice(dot + 1));
+          } else {
+            names.push(chunk.symbol);
+          }
+          for (const key of keys) {
+            const list = index.symbols.get(key) ?? [];
+            list.push(entry);
+            index.symbols.set(key, list);
+          }
         }
       }
       if (names.length > 0) {

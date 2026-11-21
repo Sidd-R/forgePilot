@@ -27,7 +27,9 @@ export function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
-const PY_DEF = /^(\s*)(def|class)\s+([A-Za-z_][A-Za-z0-9_]*)/;
+const PY_DEF = /^(\s*)(?:async\s+)?(def|class)\s+([A-Za-z_][A-Za-z0-9_]*)/;
+/** Python classes longer than this are split into a header plus one chunk per method. */
+const CLASS_SPLIT_LINES = 40;
 const TS_DEF =
   /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s+([A-Za-z_][A-Za-z0-9_]*)|class\s+([A-Za-z_][A-Za-z0-9_]*)|(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=)/;
 const MD_HEADING = /^(#{1,6})\s+(.+)/;
@@ -38,7 +40,8 @@ function docstring(lines: string[], from: number): string | undefined {
     const line = lines[i].trim();
     const match = line.match(/^(?:"""|'''|"(?!")|'(?!'))(.{0,160})/);
     if (match) {
-      return match[1].trim() || undefined;
+      // One-line docstrings carry their closing quotes; drop them.
+      return match[1].replace(/("""|'''|"|')\s*$/, '').trim() || undefined;
     }
     if (line && !line.startsWith('#')) {
       return undefined;
@@ -55,10 +58,10 @@ export function chunkFile(relPath: string, text: string): Chunk[] {
     return chunkDocs(relPath, lines);
   }
   if (ext === '.py' || ext === '.pyi') {
-    return chunkCode(relPath, lines, PY_DEF, 2);
+    return chunkPython(relPath, lines);
   }
   if (['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) {
-    return chunkCode(relPath, lines, TS_DEF, 0);
+    return chunkCode(relPath, lines, TS_DEF);
   }
   return chunkWindows(relPath, lines);
 }
@@ -70,6 +73,7 @@ function makeChunk(
   end: number,
   symbol: string | undefined,
   kind: Chunk['kind'],
+  defLine = start,
 ): Chunk {
   const text = lines.slice(start, end).join('\n');
   return {
@@ -79,39 +83,118 @@ function makeChunk(
     endLine: end,
     symbol,
     kind,
-    signature: (lines[start] ?? '').trim().slice(0, 200),
-    doc: docstring(lines, start + 1),
+    signature: (lines[defLine] ?? '').trim().slice(0, 200),
+    doc: docstring(lines, defLine + 1),
     text,
     tokens: estimateTokens(text),
   };
 }
 
+/** First line of the decorator block directly above `defLine` (same indent). */
+function decoratorStart(lines: string[], defLine: number, floor: number): number {
+  const indent = (lines[defLine].match(/^\s*/) ?? [''])[0];
+  let start = defLine;
+  while (start - 1 > floor && lines[start - 1].startsWith(`${indent}@`)) {
+    start--;
+  }
+  return start;
+}
+
+interface PyStart {
+  /** First line of the chunk (decorators included). */
+  line: number;
+  /** The def/class line itself. */
+  defLine: number;
+  symbol: string;
+  kind: Chunk['kind'];
+}
+
 /**
- * Module-level split: a chunk starts at each top-level definition and
- * runs to the next one (Python methods stay inside their class chunk).
- * Files without definitions become one chunk.
+ * Python: split at top-level def/class, decorators attached to the
+ * definition they decorate. Long classes become a header chunk (class
+ * line, docstring, attributes) plus one `Class.method` chunk per method,
+ * so a single large class never swamps the budget or hides its methods
+ * from search.
  */
-function chunkCode(
-  relPath: string,
-  lines: string[],
-  pattern: RegExp,
-  nameGroup: number,
-): Chunk[] {
+function chunkPython(relPath: string, lines: string[]): Chunk[] {
+  const starts: PyStart[] = [];
+  lines.forEach((line, i) => {
+    const match = line.match(PY_DEF);
+    if (!match || match[1].length !== 0) {
+      return;
+    }
+    starts.push({
+      line: decoratorStart(lines, i, starts.length ? starts[starts.length - 1].defLine : -1),
+      defLine: i,
+      symbol: match[3],
+      kind: match[2] === 'class' ? 'class' : 'function',
+    });
+  });
+  if (starts.length === 0) {
+    return lines.length > 0
+      ? [makeChunk(relPath, lines, 0, lines.length, undefined, 'window')]
+      : [];
+  }
+  const out: Chunk[] = [];
+  if (starts[0].line > 0) {
+    out.push(makeChunk(relPath, lines, 0, starts[0].line, undefined, 'window'));
+  }
+  for (let k = 0; k < starts.length; k++) {
+    const s = starts[k];
+    const end = k + 1 < starts.length ? starts[k + 1].line : lines.length;
+    if (s.kind === 'class' && end - s.line > CLASS_SPLIT_LINES) {
+      out.push(...splitClass(relPath, lines, s, end));
+    } else {
+      out.push(makeChunk(relPath, lines, s.line, end, s.symbol, s.kind, s.defLine));
+    }
+  }
+  return out;
+}
+
+/** Header chunk plus one chunk per first-level method of a long class. */
+function splitClass(relPath: string, lines: string[], cls: PyStart, end: number): Chunk[] {
+  const methods: PyStart[] = [];
+  let bodyIndent: string | undefined;
+  for (let i = cls.defLine + 1; i < end; i++) {
+    const match = lines[i].match(PY_DEF);
+    if (!match || match[2] !== 'def' || match[1].length === 0) {
+      continue;
+    }
+    bodyIndent ??= match[1];
+    if (match[1] !== bodyIndent) {
+      continue; // nested function inside a method
+    }
+    const floor = methods.length ? methods[methods.length - 1].defLine : cls.defLine;
+    methods.push({
+      line: decoratorStart(lines, i, floor),
+      defLine: i,
+      symbol: `${cls.symbol}.${match[3]}`,
+      kind: 'function',
+    });
+  }
+  if (methods.length === 0) {
+    return [makeChunk(relPath, lines, cls.line, end, cls.symbol, 'class', cls.defLine)];
+  }
+  const out = [
+    makeChunk(relPath, lines, cls.line, methods[0].line, cls.symbol, 'class', cls.defLine),
+  ];
+  for (let k = 0; k < methods.length; k++) {
+    const m = methods[k];
+    const mEnd = k + 1 < methods.length ? methods[k + 1].line : end;
+    out.push(makeChunk(relPath, lines, m.line, mEnd, m.symbol, m.kind, m.defLine));
+  }
+  return out;
+}
+
+/**
+ * TS/JS module-level split: a chunk starts at each top-level definition
+ * and runs to the next one. Files without definitions become one chunk.
+ */
+function chunkCode(relPath: string, lines: string[], pattern: RegExp): Chunk[] {
   const starts: Array<{ line: number; symbol: string; kind: Chunk['kind'] }> = [];
   lines.forEach((line, i) => {
     const match = line.match(pattern);
     if (!match) {
-      return;
-    }
-    if (nameGroup > 0) {
-      if (match[1].length !== 0) {
-        return;
-      }
-      starts.push({
-        line: i,
-        symbol: match[nameGroup + 1],
-        kind: match[2] === 'class' ? 'class' : 'function',
-      });
       return;
     }
     const symbol = match[1] ?? match[2] ?? match[3] ?? 'anonymous';

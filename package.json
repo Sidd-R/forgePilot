@@ -4,7 +4,7 @@
   "description": "Thin-client VS Code coding agent. The agent loop runs on local TrueForge; this extension provides the editor UI and MCP tools.",
   "version": "0.0.1",
   "publisher": "sidebar-syndicate",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=22.14.0"
