@@ -10,9 +10,6 @@ import { resolveTargetLines } from './target';
 import { formatUsage } from '../flows/usage';
 import { noticeLevel } from '../panel/present';
 
-/** How long the inline result stays on screen after the review ends. */
-const RESULT_VISIBLE_MS = 25_000;
-
 function showNotice(message: string): void {
   const level = noticeLevel(message);
   const text = `ForgePilot: ${message}`;
@@ -104,23 +101,10 @@ export async function runInlineCommand(host: Host): Promise<void> {
     editor,
     new vscode.Range(target.startLine - 1, 0, target.endLine - 1, 0),
   );
-  // The command (and its busy lock) ends with the run; the notification
-  // may stay open afterwards to show the result.
-  let release = (): void => undefined;
-  const runEnded = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  void vscode.window.withProgress(
+  await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `ForgePilot · ${where}`, cancellable: true },
-    async (progress, token) => {
-      try {
-        await inlineRun(progress, token, target, instruction);
-      } finally {
-        release();
-      }
-    },
+    (progress, token) => inlineRun(progress, token, target, instruction),
   );
-  await runEnded;
 
   async function inlineRun(
     progress: vscode.Progress<{ message?: string }>,
@@ -139,13 +123,7 @@ export async function runInlineCommand(host: Host): Promise<void> {
         return host.review.open(rootDir, runId, proposalId, newText);
       },
     };
-    let finished = false;
-    let dismiss = (): void => undefined;
     token.onCancellationRequested(() => {
-      if (finished) {
-        dismiss(); // Closing the result notification early.
-        return;
-      }
       host.cancelled = true;
       // Resolve any open review first: with the silence timer disarmed
       // while paused, a pending review would wedge the loader forever,
@@ -199,7 +177,7 @@ export async function runInlineCommand(host: Host): Promise<void> {
     host.activeSession = undefined;
     const spent = tokens ? `  ·  ${tokens} tokens` : '';
     const result: Record<string, string> = {
-      applied: `✓ Edit applied to ${where}. Undo: ForgePilot: Undo Last Change.${spent}`,
+      applied: `✓ Edit applied to ${where}.${spent}`,
       rejected: `All hunks rejected; the file is unchanged.${spent}`,
       cancelled: `Cancelled; the file is unchanged.${spent}`,
     };
@@ -207,16 +185,12 @@ export async function runInlineCommand(host: Host): Promise<void> {
     if (!message) {
       return;
     }
-    // Keep the result visible: plain notifications hide on VS Code's own timer.
-    finished = true;
-    progress.report({ message });
-    release();
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, RESULT_VISIBLE_MS);
-      dismiss = () => {
-        clearTimeout(timer);
-        resolve();
-      };
+    // The loader closes here; the result gets real Undo / Close buttons.
+    const buttons = outcome === 'applied' ? ['Undo', 'Close'] : ['Close'];
+    void vscode.window.showInformationMessage(`ForgePilot: ${message}`, ...buttons).then((choice) => {
+      if (choice === 'Undo') {
+        void vscode.commands.executeCommand('forgePilot.undoLast');
+      }
     });
   }
 }
