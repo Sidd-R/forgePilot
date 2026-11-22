@@ -3,6 +3,7 @@ import { applyHunks } from './diff';
 import { layoutReview } from './reviewPlan';
 import { ProposalStore, applyText, readText, writeFile } from './proposals';
 import { languageFor, layoutOf, ReviewView } from './reviewView';
+import { revertIfUnchanged } from './revert';
 import type { OpenReview, ReviewPort, ReviewResult } from './reviewView';
 
 export type { ReviewResult, ReviewPort };
@@ -250,6 +251,9 @@ export class ReviewController implements ReviewPort {
         const text = applyHunks(review.beforeText, proposal.hunks, review.accepted);
         const rel = vscode.workspace.asRelativePath(review.uri);
         await applyText(rootDir, rel, text, accepted.length > 0);
+        if (accepted.length === 0) {
+          await revertIfUnchanged(review.uri);
+        }
       }
       await this.restoreAutoSave();
       if (this.reviews.size === 0) {
