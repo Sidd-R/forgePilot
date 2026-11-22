@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <title>ForgePilot Round 1 Write-up</title>
 <style>
-  @page { size: A4; margin: 12mm 13mm; }
+  @page { size: A4; margin: 10mm 12mm; }
   * { box-sizing: border-box; }
-  body { font-family: "Segoe UI", Calibri, Arial, sans-serif; font-size: 8.6pt; line-height: 1.32; color: #1d1d1f; margin: 0; }
+  body { font-family: "Segoe UI", Calibri, Arial, sans-serif; font-size: 8.4pt; line-height: 1.32; color: #1d1d1f; margin: 0; }
   h1 { font-size: 15pt; margin: 0 0 1px; }
   .sub { color: #555; font-size: 8pt; margin-bottom: 4px; }
   h2 { break-after: avoid; font-size: 10.5pt; color: #1f4e8c; border-bottom: 1.5px solid #1f4e8c; padding-bottom: 1px; margin: 7px 0 3px; }
@@ -24,6 +24,9 @@
   .cols > div { flex: 1; }
   .k { font-weight: 600; }
   tr, li { break-inside: avoid; }
+  table.cost { width: auto; margin: 2px 0 3px; white-space: nowrap; }
+  table.cost td, table.cost th { padding: 1px 5px; }
+  table.cost td:nth-child(n+3), table.cost th:nth-child(n+3) { text-align: right; }
 </style>
 </head>
 <body>
@@ -78,7 +81,7 @@
   <li><b>Context engineering: dynamic sub-agents</b> (agent mode). Exploration is handed off, and only paths, line ranges and reasons come back, which keeps the main context small.</li>
   <li><b>Context engineering: deferred tool loading</b> for the secondary <code>forge-workspace</code> server (see above).</li>
   <li><b>Context engineering: compaction</b> at 60k input tokens, so long multi-file runs keep going.</li>
-  <li>Sub-agents and deferred tool loading are visible in the Task B TrueForge session alongside the turns and tool calls. Compaction is a safety net for long runs; it triggers only past 60k input tokens, so a short run like Task B may not reach it.</li>
+  <li>In Task B, the sub-agent is visible in the TrueForge session alongside the turns and tool calls, and deferred tool loading shows in the agent panel. Compaction is a safety net for long runs; it triggers only past 60k input tokens, so a short run like Task B may not reach it.</li>
   <li><b>Iteration limits</b>: 60 for the coder agent, 6 for the inline agent.</li>
   <li><b>Per-agent tool scoping</b>: <code>enable_tools: [propose_edit]</code> for the inline agent.</li>
   <li><b>Deterministic edits</b>: temperature 0 and <code>parallel_tool_calls: false</code>.</li>
@@ -90,10 +93,11 @@
 <ul>
   <li>Tokens appear as TrueForge's <code>model.message.delta</code> events arrive over SSE, in both the panel and inline edit. Everything runs asynchronously, so the editor never blocks.</li>
   <li><b>Stop</b> (panel button, status bar, or <code>Ctrl+Alt+Backspace</code>) cancels at once. It cancels the TrueForge session, stops retries, backoff and fallback, closes every open review as rejected, and kills any running command.</li>
+  <li><b>Token usage per run:</b> every run shows its input tokens (with the cached share) and output tokens: live in the panel footer ("This run" / "Last run") and in the inline-edit notification.</li>
   <li><b>No half-applied edits:</b> files are written only after review, and only if the file hasn't changed since the proposal was built. A cancelled run leaves <code>git status</code> clean.</li>
 </ul>
 
-<h2>4. How context is selected</h2>
+<h2 style="break-before: page">4. How context is selected</h2>
 <h3>Indexing</h3>
 <ul>
   <li>Files are split into chunks at function, class and heading boundaries (Python, TS/JS, Markdown, RST); other files use line windows. Decorators stay with their function, and Python classes over 40 lines become a header chunk plus one <code>Class.method</code> chunk per method, so a 1,000-line class never fills the budget or hides its methods from search.</li>
@@ -158,9 +162,18 @@
 
 <h2>5. Model setup</h2>
 <ul>
-  <li><b>Models:</b> <code>muse-spark-1.3-contributor</code> (primary) and <code>muse-spark-1.3</code> (fallback), Meta's Muse models.</li>
+  <li><b>Models:</b> Meta's <code>muse-spark-1.3-contributor</code> (primary) and <code>muse-spark-1.3</code> (fallback), named <code>muse-spark-1-3-contributor</code> and <code>muse-spark-1-3</code> in TrueForge.</li>
   <li><b>Where they ran:</b> Meta's hosted Muse API (OpenAI-compatible), registered in TrueForge (local mode, on our laptops) as the custom provider <code>muse</code> under Settings → Models. Requests go extension → local TrueForge → model API; the extension holds no keys.</li>
-  <li><b>Approximate cost:</b> <span class="ph">[≈ $X for ≈ N tokens across development and demo]</span>. Cost = (input tokens × input price + output tokens × output price) ÷ 1M, using token counts from TrueForge session usage.</li>
+  <li><b>Approximate cost: ≈ $0.17</b> for the four runs in the demo video. Meta list prices per 1M tokens (input / cached / output): <code>muse-spark-1.3-contributor</code> $0.10 / $0.002 / $0.20; <code>muse-spark-1.3</code> $1.25 / $0.15 / $4.25. Cost = (uncached input × input price + cached input × cached price + output × output price) ÷ 1M, using ForgePilot's per-run token readout. Task C ran on the standard fallback because the broken primary failed with 401 before using any tokens.
+    <table class="cost">
+      <tr><th>Run</th><th>Model</th><th>Input</th><th>Cached</th><th>Output</th><th>Cost</th></tr>
+      <tr><td>Task A inline</td><td>contributor</td><td>1.9k</td><td>0</td><td>1.4k</td><td>$0.0005</td></tr>
+      <tr><td>Task B agent</td><td>contributor</td><td>475.3k</td><td>398.4k</td><td>14.4k</td><td>$0.011</td></tr>
+      <tr><td>Task C inline</td><td>standard (fallback)</td><td>1.9k</td><td>1.8k</td><td>1.2k</td><td>$0.006</td></tr>
+      <tr><td>Task C agent (cancelled)</td><td>standard (fallback)</td><td>176.6k</td><td>97.4k</td><td>9.3k</td><td>$0.153</td></tr>
+      <tr><th colspan="5">Total</th><th>≈ $0.17</th></tr>
+    </table>
+  </li>
   <li><b>Any model works:</b> models are configured only in TrueForge, and ForgePilot refers to them by name. Any catalog provider, AI gateway or local OpenAI-compatible model works with no code change. An example configuration ships in <code>models.example.yaml</code>.</li>
   <li><b>Switching models:</b>
     <ul>
@@ -173,15 +186,15 @@
 
 <h2>6. Scorecard</h2>
 <table>
-  <tr><th style="width:21%">Judging criterion</th><th style="width:8%">Video</th><th>Claim</th></tr>
-  <tr><td>A1 Inline edit</td><td><span class="ph">[mm:ss]</span></td><td>Task A: select <code>get_debug_flag</code>, press Ctrl+Alt+K, give the instruction. The diff appears in the editor with Accept or Reject per hunk. After accepting, <code>FLASK_DEBUG=off</code> prints <code>False</code>.</td></tr>
-  <tr><td>A2 Agent mode</td><td><span class="ph">[mm:ss]</span></td><td>Task B: no files named. The agent finds and edits 3+ files (CLI code, its test, the CLI docs). <code>pytest tests/test_cli.py -q</code> passes and <code>flask config</code> prints masked JSON.</td></tr>
-  <tr><td>A3 Streaming &amp; cancellation</td><td><span class="ph">[mm:ss]</span></td><td>Tokens stream from TrueForge as they arrive and the editor stays responsive. Stop cancels mid-run, closes any open review as rejected, and <code>git status</code> shows no changes.</td></tr>
-  <tr><td>B1 Context assembly</td><td><span class="ph">[mm:ss]</span></td><td>In Task B, the Context picked card lists each automatically chosen file and chunk, why it was picked, and its token cost against the 8k budget. The agent's summary says why each changed file was chosen.</td></tr>
-  <tr><td>B2 Diff safety</td><td><span class="ph">[mm:ss]</span></td><td>Hunks are reviewed one at a time; nothing is written before a decision. A rejected hunk stays unapplied, and Undo last restores an applied change on screen.</td></tr>
-  <tr><td>B3 Resilience</td><td><span class="ph">[mm:ss]</span></td><td>Task C: invalid key on the primary model. ForgePilot falls back to the second model automatically with a visible notice; <code>git status</code> shows no changes.</td></tr>
-  <tr><td>B4 TrueForge integration</td><td><span class="ph">[mm:ss]</span></td><td>Editor actions are MCP tools (localhost only, bearer token, path jail). TrueForge's approval opens the diff review. The Task B session shows turns, tool calls, sub-agents and deferred tool loading.</td></tr>
-  <tr><td>C1 Video</td><td><span class="ph">[mm:ss]</span></td><td>Tasks A, B and C in order, each followed by its verification on screen.</td></tr>
+  <tr><th style="width:21%">Judging criterion</th><th style="width:13%">Video</th><th>Claim</th></tr>
+  <tr><td>A1 Inline edit</td><td>0:00–0:50</td><td>Task A: select <code>get_debug_flag</code>, open Inline Edit (0:12) and give the instruction (0:16). The diff appears in the editor with Accept or Reject per hunk (0:22). After accepting (0:28), <code>FLASK_DEBUG=off</code> prints <code>False</code> (0:34).</td></tr>
+  <tr><td>A2 Agent mode</td><td>0:54–2:34</td><td>Task B: no files named (prompt 0:54). The TrueForge session is shown mid-run (1:12–1:18). The agent finds and edits 3 files: CLI code, its test and the CLI docs (review 1:50). <code>pytest tests/test_cli.py -q</code> passes (57 passed, 3 skipped, 2:05), <code>flask --help</code> lists <code>config</code> (2:09) and <code>flask config</code> prints masked JSON (2:20).</td></tr>
+  <tr><td>A3 Streaming &amp; cancellation</td><td>0:56–1:50, 3:44–3:58</td><td>Tokens stream from TrueForge as they arrive and the editor stays responsive. Stop cancels mid-run, closes any open review as rejected, and <code>git status</code> shows no changes.</td></tr>
+  <tr><td>B1 Context assembly</td><td>0:56, 2:10</td><td>In Task B, the Context picked card lists each automatically chosen file and chunk, why it was picked, and its token cost against the 8k budget. The agent's summary says why each changed file was chosen.</td></tr>
+  <tr><td>B2 Diff safety</td><td>0:22, 0:40, 1:50, 2:30, 3:16</td><td>Hunks are reviewed one at a time; nothing is written before a decision. Undo last (0:40) and Undo run (2:30) restore applied changes on screen. Rejected hunks stay unapplied (3:16).</td></tr>
+  <tr><td>B3 Resilience</td><td>2:36–3:50</td><td>Task C: invalid key on the primary model (set up 2:36–3:00; inline fallback 3:06; agent fallback 3:24). ForgePilot falls back to the second model automatically with a visible notice; <code>git status</code> shows no changes.</td></tr>
+  <tr><td>B4 TrueForge integration</td><td>1:12–1:18, 2:00, 3:52</td><td>Editor actions are MCP tools (localhost only, bearer token, path jail). TrueForge's approval opens the diff review. The Task B session shows turns, tool calls and the sub-agent (1:12–1:18); deferred tool loading shows in the panel (2:00).</td></tr>
+  <tr><td>C1 Video</td><td>0:00–3:58</td><td>Tasks A (0:00), B (0:54) and C (2:36) in order, each followed by its verification on screen.</td></tr>
   <tr><td>C2 Write-up</td><td>—</td><td>Architecture, context strategy and budget, model setup and cost, trade-offs, this scorecard and known limitations.</td></tr>
 </table>
 
@@ -200,7 +213,7 @@
   <tr><td><b>Simple code splitting</b></td><td>Code is cut into pieces with pattern rules that only fully understand Python, TS/JS and docs. Token counts are estimates.</td><td>Use a real parser (tree-sitter) for every language and an exact token counter.</td></tr>
   <tr><td><b>Slow on very large repos</b></td><td>The whole project is re-indexed on every save, and only one workspace folder is supported.</td><td>Re-index only changed files, and support multi-folder workspaces.</td></tr>
   <tr><td><b>Commands aren't isolated</b></td><td>Commands only run after you approve them, but then they run on your machine with full access.</td><td>Run them in a sandbox or container, with a list of allowed commands.</td></tr>
-  <tr><td><b>Setup and cost visibility</b></td><td>TrueForge needs a special startup flag, and you can't see how many tokens or how much money a run used.</td><td>One-click setup and a token and cost readout per run in the panel.</td></tr>
+  <tr><td><b>Manual setup</b></td><td>TrueForge needs a special startup flag before ForgePilot can connect.</td><td>One-click setup from the extension.</td></tr>
 </table>
 
 </body>
